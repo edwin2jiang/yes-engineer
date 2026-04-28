@@ -1,0 +1,40 @@
+# slap-to-yes config — copy to ~/.config/baituo-cc/config.toml
+
+# Sensitivity threshold in g-force.
+# 0.05 = light tap, 0.14 = light slap (default), 0.30 = real whack.
+# Raise this if heavy typing or closing the lid triggers Enter.
+min_amplitude = 0.144
+
+# Cooldown between Enter presses, in milliseconds.
+# Stops a single rapid double-slap from firing twice.
+cooldown_ms = 600
+
+# How to gate the Enter key:
+#   "whitelist" — only fire when frontmost app is in `apps` (recommended)
+#   "global"    — fire anywhere (dangerous; use only with menubar pause)
+#   "off"       — detect slaps but never press Enter (debug)
+mode = "whitelist"
+
+# Bundle IDs that count as "vibe coding" contexts.
+# Find an app's bundle ID with:
+#   osascript -e 'id of app "Cursor"'
+apps = [
+    # Terminals where Claude Code typically runs
+    "com.apple.Terminal",
+    "com.googlecode.iterm2",
+    "com.mitchellh.ghostty",
+    "dev.warp.Warp-Stable",
+    "dev.warp.Warp",
+    "net.kovidgoyal.kitty",
+    "io.alacritty",
+    "co.zeit.hyper",
+    "org.tabby",
+    "com.github.wez.wezterm",
+
+    # AI-first editors with their own confirmation prompts
+    "com.todesktop.230313mzl4w4u92",  # Cursor
+    "com.exafunction.windsurf",
+    "dev.zed.Zed",
+    "com.microsoft.VSCode",
+    "com.apple.dt.Xcode",
+]

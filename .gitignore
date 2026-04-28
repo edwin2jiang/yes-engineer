@@ -1,0 +1,37 @@
+# macOS
+.DS_Store
+
+# Swift / SwiftPM
+app/.build/
+app/.swiftpm/
+app/build/
+app/Package.resolved
+*.xcodeproj/
+
+# Go (legacy v0.1 CLI)
+slap-to-yes
+baituo-cc
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+go.work.sum
+vendor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Local config & logs
+config.local.toml
+*.log
+
+# Icon source intermediates (keep AppIcon.icns committed)
+app/Bundle/icon-drafts/
+app/Bundle/AppIcon.iconset/
+app/Bundle/icon-1024.png
