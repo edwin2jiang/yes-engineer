@@ -139,12 +139,6 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ github.ref_name }}"
-          # For workflow_dispatch, the tag should already exist in the repo
-          # (we don't auto-create tags from a manual run).
-          if ! gh release view "${TAG}" >/dev/null 2>&1; then
-            echo "::error::Release ${TAG} does not exist. Create the tag first, then re-run."
-            exit 1
-          fi
 
           # Build the upload list from the staged artifacts. Skip files
           # that were never produced (e.g. DMG build failure).
@@ -160,6 +154,25 @@ jobs:
             echo "::error::No artifacts produced, aborting."
             exit 1
           fi
+
+          # Ensure the Release exists. A tag push doesn't create the
+          # Release object — only `gh release create` does. On a manual
+          # `workflow_dispatch` the Release may already exist; in that
+          # case we just upload to it.
+          if ! gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "==> creating release ${TAG}"
+            # Create the release with no assets first, then upload so the
+            # failure mode (e.g. an artifact missing) doesn't leave a
+            # half-populated Release behind.
+            gh release create "${TAG}" \
+              --title "Yes Engineer ${TAG}" \
+              --generate-notes \
+              --verify-tag
+          else
+            echo "==> release ${TAG} already exists, uploading artifacts"
+          fi
+
+          echo "==> uploading ${#ARTIFACTS[@]} artifacts"
           gh release upload "${TAG}" "${ARTIFACTS[@]}" --clobber
 
           # Annotate the release body with SHA-256 sums so users can verify
