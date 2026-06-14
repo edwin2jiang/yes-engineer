@@ -2,8 +2,8 @@ import Foundation
 import SharedTypes
 import os
 
-final class DaemonClient: NSObject, SlapClientProtocol {
-    private let log = Logger(subsystem: "ai.slaptoyes", category: "client")
+final class DaemonClient: NSObject, YesEngineerClientProtocol {
+    private let log = Logger(subsystem: "ai.yesengineer", category: "client")
     private var connection: NSXPCConnection?
     private var reconnectWorkItem: DispatchWorkItem?
     var onSlap: ((SlapEvent) -> Void)?
@@ -13,9 +13,9 @@ final class DaemonClient: NSObject, SlapClientProtocol {
         reconnectWorkItem?.cancel()
         reconnectWorkItem = nil
 
-        let conn = NSXPCConnection(machServiceName: SlapDaemonMachServiceName, options: .privileged)
-        conn.remoteObjectInterface = NSXPCInterface(with: SlapDaemonProtocol.self)
-        conn.exportedInterface = NSXPCInterface(with: SlapClientProtocol.self)
+        let conn = NSXPCConnection(machServiceName: YesEngineerDaemonMachServiceName, options: .privileged)
+        conn.remoteObjectInterface = NSXPCInterface(with: YesEngineerDaemonProtocol.self)
+        conn.exportedInterface = NSXPCInterface(with: YesEngineerClientProtocol.self)
         conn.exportedObject = self
         conn.invalidationHandler = { [weak self, weak conn] in
             self?.handleDisconnect("invalidated", connection: conn)
@@ -47,15 +47,15 @@ final class DaemonClient: NSObject, SlapClientProtocol {
         proxy()?.updateConfig(data) { _ in }
     }
 
-    private func proxy() -> SlapDaemonProtocol? {
+    private func proxy() -> YesEngineerDaemonProtocol? {
         guard let connection = connection else { return nil }
         return proxy(for: connection)
     }
 
-    private func proxy(for connection: NSXPCConnection) -> SlapDaemonProtocol? {
+    private func proxy(for connection: NSXPCConnection) -> YesEngineerDaemonProtocol? {
         connection.remoteObjectProxyWithErrorHandler { [weak self] err in
             self?.log.error("xpc proxy: \(err.localizedDescription, privacy: .public)")
-        } as? SlapDaemonProtocol
+        } as? YesEngineerDaemonProtocol
     }
 
     private func handleDisconnect(_ reason: String, connection disconnected: NSXPCConnection?) {
@@ -78,7 +78,7 @@ final class DaemonClient: NSObject, SlapClientProtocol {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: item)
     }
 
-    // MARK: SlapClientProtocol
+    // MARK: YesEngineerClientProtocol
 
     func slapDetected(_ data: Data) {
         guard let event = try? JSONDecoder().decode(SlapEvent.self, from: data) else { return }
