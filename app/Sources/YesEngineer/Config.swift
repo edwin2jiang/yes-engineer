@@ -1,8 +1,24 @@
 import Foundation
 import SharedTypes
 
-enum AppMode: String, Codable {
-    case whitelist, global
+enum AppMode: String, Codable, CaseIterable {
+    case whitelist, global, off
+
+    var menuTitle: String {
+        switch self {
+        case .whitelist: return L10n.text("Whitelist (recommended)", "白名单（推荐）")
+        case .global: return L10n.text("All apps", "所有应用")
+        case .off: return L10n.text("Off (log only)", "关闭（仅记录）")
+        }
+    }
+
+    var shortTitle: String {
+        switch self {
+        case .whitelist: return L10n.text("Whitelist", "白名单")
+        case .global: return L10n.text("All apps", "所有应用")
+        case .off: return L10n.text("Off", "关闭")
+        }
+    }
 }
 
 enum FeedbackMode: String, Codable, CaseIterable {
@@ -174,8 +190,21 @@ struct TextAction: Codable, Equatable {
 struct AppConfig: Codable {
     var minAmplitude: Double = 0.144
     var cooldownMs: Int = 600
-    var mode: AppMode = .whitelist
-    var apps: [String] = AppConfig.defaultApps
+    /// New default is `.global` (fires in every foreground app). Users who
+    /// want stricter behavior can flip to `.whitelist` and curate the list.
+    var mode: AppMode = .global
+    /// User's enable/disable choices for the built-in catalog. Bundle IDs
+    /// not present in this set are treated as disabled. Defaults to
+    /// "all built-ins enabled".
+    var enabledDefaultApps: Set<String> = Set(WhitelistCatalog.defaultBundleIDs)
+    /// User-added apps. These are always enabled when present.
+    var customApps: [CustomApp] = []
+    /// Effective allowlist = (enabled built-ins) ∪ (custom apps). Kept
+    /// synchronized whenever the user toggles or adds/removes items.
+    var apps: [String] = AppConfig.computeApps(
+        enabledDefaultApps: Set(WhitelistCatalog.defaultBundleIDs),
+        customApps: []
+    )
     var paused: Bool = false
     var pauseSlapActions: Bool = false
     var pauseHotkeys: Bool = false
@@ -184,23 +213,26 @@ struct AppConfig: Codable {
     var feedbackMode: FeedbackMode = .toast
     var autoRequestAccessibility: Bool = true
 
-    static let defaultApps: [String] = [
-        "com.apple.Terminal",
-        "com.googlecode.iterm2",
-        "com.mitchellh.ghostty",
-        "dev.warp.Warp-Stable",
-        "dev.warp.Warp",
-        "net.kovidgoyal.kitty",
-        "io.alacritty",
-        "co.zeit.hyper",
-        "org.tabby",
-        "com.github.wez.wezterm",
-        "com.todesktop.230313mzl4w4u92",
-        "com.exafunction.windsurf",
-        "dev.zed.Zed",
-        "com.microsoft.VSCode",
-        "com.apple.dt.Xcode",
-    ]
+    /// Effective allowlist derived from the two underlying sources.
+    var effectiveApps: [String] {
+        AppConfig.computeApps(enabledDefaultApps: enabledDefaultApps,
+                              customApps: customApps)
+    }
+
+    static func computeApps(enabledDefaultApps: Set<String>,
+                            customApps: [CustomApp]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for id in WhitelistCatalog.defaultBundleIDs where enabledDefaultApps.contains(id) {
+            if seen.insert(id).inserted { result.append(id) }
+        }
+        for app in customApps {
+            let trimmed = app.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
+            result.append(trimmed)
+        }
+        return result
+    }
 
     func daemonConfig() -> DaemonConfig {
         DaemonConfig(minAmplitude: minAmplitude, cooldownMs: cooldownMs)
@@ -227,16 +259,63 @@ struct AppConfig: Codable {
 
     enum CodingKeys: String, CodingKey {
         case minAmplitude, cooldownMs, mode, apps, paused, pauseSlapActions, pauseHotkeys, slapActionID, textActions, feedbackMode, autoRequestAccessibility
+        case enabledDefaultApps, customApps
     }
 
-    init() {}
+    init() {
+        self.apps = effectiveApps
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         minAmplitude = try c.decodeIfPresent(Double.self, forKey: .minAmplitude) ?? 0.144
         cooldownMs = try c.decodeIfPresent(Int.self, forKey: .cooldownMs) ?? 600
-        mode = try c.decodeIfPresent(AppMode.self, forKey: .mode) ?? .whitelist
-        apps = try c.decodeIfPresent([String].self, forKey: .apps) ?? AppConfig.defaultApps
+        // First-run / pre-existing users get the safer `.whitelist` default
+        // so we don't silently start sending Enter to every app on upgrade.
+        // Only fresh installs (no `mode` key at all) get `.global`.
+        let rawMode = try c.decodeIfPresent(String.self, forKey: .mode)
+        if let raw = rawMode, let parsed = AppMode(rawValue: raw) {
+            mode = parsed
+        } else if (try? c.decodeNil(forKey: .mode)) == true {
+            // Key exists with null value: written by this version, use new default.
+            mode = .global
+        } else {
+            // Legacy config (no mode key, or unknown value): keep whitelist
+            // to preserve prior behavior.
+            mode = .whitelist
+        }
+        enabledDefaultApps = try c.decodeIfPresent(Set<String>.self, forKey: .enabledDefaultApps)
+            ?? Set(WhitelistCatalog.defaultBundleIDs)
+        customApps = try c.decodeIfPresent([CustomApp].self, forKey: .customApps) ?? []
+
+        // Migration: if a legacy config wrote an `apps` array, intersect it
+        // with the built-in catalog to recover the user's enable/disable
+        // choices. Anything in the legacy list that doesn't match a known
+        // built-in is treated as a custom app so we don't drop it.
+        if let legacyApps = try c.decodeIfPresent([String].self, forKey: .apps) {
+            let builtInSet = Set(WhitelistCatalog.defaultBundleIDs)
+            var rebuiltEnabled: Set<String> = []
+            var migrated: [CustomApp] = []
+            for id in legacyApps {
+                if builtInSet.contains(id) {
+                    rebuiltEnabled.insert(id)
+                } else {
+                    migrated.append(CustomApp(
+                        id: "migrated-\(UUID().uuidString)",
+                        bundleID: id,
+                        displayName: WhitelistCatalog.entry(for: id)?.displayName ?? id,
+                        note: L10n.text("Migrated from previous settings", "从旧配置迁移")))
+                }
+            }
+            // Only override if the user had an explicit choice.
+            if !rebuiltEnabled.isEmpty || !legacyApps.isEmpty {
+                enabledDefaultApps = rebuiltEnabled
+                if !migrated.isEmpty {
+                    customApps = migrated + customApps
+                }
+            }
+        }
+
         paused = try c.decodeIfPresent(Bool.self, forKey: .paused) ?? false
         pauseSlapActions = try c.decodeIfPresent(Bool.self, forKey: .pauseSlapActions) ?? false
         pauseHotkeys = try c.decodeIfPresent(Bool.self, forKey: .pauseHotkeys) ?? false
@@ -251,6 +330,7 @@ struct AppConfig: Codable {
             slapActionID = textActions.first(where: { $0.id == TextAction.defaultSlapActionID })?.id
                 ?? textActions[0].id
         }
+        apps = effectiveApps
     }
 }
 

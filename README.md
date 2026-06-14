@@ -13,7 +13,8 @@ The Chinese product name is **Yes 工程师**. The English name is used for the 
 - Detects duplicate shortcuts inside Yes Engineer and global shortcuts already reserved by macOS or another app.
 - Supports English and Simplified Chinese, selected automatically from the macOS preferred language.
 - Runs locally without uploading sensor data, shortcuts, or typed content.
-- Limits actions to common AI coding apps by default, with an optional all-apps mode.
+- Default to firing in every foreground app, with an optional whitelist mode that limits actions to AI coding apps you select.
+- Manage the built-in allowlist and add custom apps from the App Scope tab in Settings.
 - Supports configurable tap sensitivity, cooldown, feedback, pause controls, actions, text, Return behavior, and shortcuts.
 
 ### Control Panel
@@ -91,7 +92,8 @@ The localization layer is centralized in `Localization.swift`, so additional lan
 - 快捷键录制时同时检查应用内重复和 macOS / 其他应用占用，并立即提示冲突原因。
 - 支持英文和简体中文，默认自动匹配 macOS 首选语言。
 - 完全本地运行，不上传传感器数据、快捷键或输入内容。
-- 默认只在常见 AI 编程应用中触发，也可以切换为所有应用。
+- 默认在所有前台应用里触发，也可以切换为白名单模式（仅在你选中的 AI 编程应用里生效）。
+- 在设置的“应用范围”标签页可管理内置白名单和添加自定义应用。
 - 可配置灵敏度、冷却时间、反馈、暂停状态、拍击动作、输入内容、自动回车和全局快捷键。
 
 ### 控制面板

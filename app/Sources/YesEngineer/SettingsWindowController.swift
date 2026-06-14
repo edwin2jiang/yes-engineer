@@ -29,12 +29,21 @@ final class SettingsWindowController: NSWindowController {
     private let pauseSlapSwitch = NSButton(checkboxWithTitle: L10n.text("Pause tap actions", "暂停拍击动作"), target: nil, action: nil)
     private let pauseHotkeysSwitch = NSButton(checkboxWithTitle: L10n.text("Pause shortcuts", "暂停快捷键"), target: nil, action: nil)
     private let modeControl = NSSegmentedControl(labels: [
-        L10n.text("AI coding apps", "AI 编程应用"),
+        L10n.text("Whitelist", "白名单"),
         L10n.text("All apps", "所有应用"),
+        L10n.text("Off", "关闭"),
     ],
-                                                 trackingMode: .selectOne,
-                                                 target: nil,
-                                                 action: nil)
+                                                  trackingMode: .selectOne,
+                                                  target: nil,
+                                                  action: nil)
+    private let modeControlInScope = NSSegmentedControl(labels: [
+        L10n.text("Whitelist", "白名单"),
+        L10n.text("All apps", "所有应用"),
+        L10n.text("Off", "关闭"),
+    ],
+                                                        trackingMode: .selectOne,
+                                                        target: nil,
+                                                        action: nil)
     private let slapActionPopup = NSPopUpButton()
     private let feedbackControl = NSSegmentedControl(labels: FeedbackMode.allCases.map(\.menuTitle),
                                                      trackingMode: .selectOne,
@@ -48,11 +57,12 @@ final class SettingsWindowController: NSWindowController {
     private let configPathButton = NSButton()
     private let pageControl = NSSegmentedControl(labels: [
         L10n.text("General", "通用"),
+        L10n.text("App Scope", "应用范围"),
         L10n.text("Actions", "动作"),
     ],
-                                                 trackingMode: .selectOne,
-                                                 target: nil,
-                                                 action: nil)
+                                                  trackingMode: .selectOne,
+                                                  target: nil,
+                                                  action: nil)
     private let pageContainer = NSView()
     private var pageViews: [NSView] = []
 
@@ -74,6 +84,7 @@ final class SettingsWindowController: NSWindowController {
         window.minSize = Layout.minWindowSize
         super.init(window: window)
         window.delegate = self
+        window.registerForDraggedTypes([.fileURL])
 
         buildUI()
         loadConfigIntoControls()
@@ -218,7 +229,7 @@ final class SettingsWindowController: NSWindowController {
         pageControl.target = self
         pageControl.action = #selector(pageChanged)
         for i in 0..<pageControl.segmentCount {
-            pageControl.setWidth(96, forSegment: i)
+            pageControl.setWidth(120, forSegment: i)
         }
         let pageControlRow = NSView()
         pageControl.translatesAutoresizingMaskIntoConstraints = false
@@ -235,8 +246,9 @@ final class SettingsWindowController: NSWindowController {
         stack.addArrangedSubview(pageContainer)
 
         let generalPage = makeScrollContent([makeAccessSection(), makeDetectionSection()])
+        let appScopePage = makeScrollContent(makeAppScopeSections())
         let actionsPage = makeScrollContent([makeActionsSection()])
-        pageViews = [generalPage, actionsPage]
+        pageViews = [generalPage, appScopePage, actionsPage]
         for page in pageViews {
             page.translatesAutoresizingMaskIntoConstraints = false
             pageContainer.addSubview(page)
@@ -452,8 +464,8 @@ final class SettingsWindowController: NSWindowController {
             formRow(L10n.text("App scope", "应用范围"),
                     modeControl,
                     help: L10n.text(
-                        "AI coding apps limits actions to the built-in foreground app allowlist.",
-                        "选择“AI 编程应用”时，仅在白名单里的前台应用生效。"
+                        "Whitelist fires only in apps you enable. All apps fires everywhere (can submit half-typed messages in any app). Off logs taps but sends nothing. Open the App Scope tab to manage the list.",
+                        "白名单模式仅在启用的应用里触发。所有应用模式会在任何前台应用里触发（可能误提交未写完的消息）。关闭模式只记录拍击，不发送任何按键。打开“应用范围”标签页可管理列表。"
                     )),
             formRow(L10n.text("Feedback", "执行反馈"), feedbackControl),
         ]
@@ -484,6 +496,506 @@ final class SettingsWindowController: NSWindowController {
             ))),
         ]
         return section(title: L10n.text("Automation Actions", "自动化动作"), rows: rows)
+    }
+
+    // MARK: - App Scope page
+
+    private weak var appScopeListStack: NSStackView?
+    private weak var appScopeEmptyLabel: NSTextField?
+    private var appScopeCategoryExpanded: [WhitelistEntry.Category: Bool] = [
+        .terminal: true, .aiEditor: true, .editor: true,
+    ]
+
+    private func makeAppScopeSections() -> [NSView] {
+        modeControlInScope.segmentStyle = .rounded
+        modeControlInScope.target = self
+        modeControlInScope.action = #selector(modeControlChanged)
+        for i in 0..<modeControlInScope.segmentCount {
+            modeControlInScope.setWidth(112, forSegment: i)
+        }
+
+        let rows: [NSView] = [
+            formRow(L10n.text("Mode", "模式"), modeControlInScope,
+                    help: L10n.text(
+                        "Whitelist fires only in apps you enable below. All apps fires everywhere (can submit half-typed messages in any app). Off logs taps but sends nothing.",
+                        "白名单模式仅在下方启用的应用里触发。所有应用模式会在任何前台应用里触发（可能误提交未写完的消息）。关闭模式只记录拍击，不发送任何按键。"
+                    )),
+            self.makeAppScopeListSection(),
+            self.makeAppScopeCustomSection(),
+        ]
+        return rows
+    }
+
+    private func makeAppScopeListSection() -> NSView {
+        // Build a section manually so the list can be re-rendered when the
+        // user toggles entries.
+        let outer = NSStackView()
+        outer.orientation = .vertical
+        outer.alignment = .left
+        outer.spacing = 8
+        outer.widthAnchor.constraint(equalToConstant: Layout.contentWidth).isActive = true
+
+        let title = NSTextField(labelWithString: L10n.text(
+            "Built-in AI coding apps",
+            "内置 AI 编程应用"
+        ))
+        title.font = .systemFont(ofSize: 14, weight: .semibold)
+        title.textColor = .labelColor
+        outer.addArrangedSubview(title)
+
+        let group = NSBox()
+        group.boxType = .custom
+        group.borderWidth = 1
+        group.cornerRadius = 10
+        group.borderColor = .separatorColor
+        group.fillColor = .controlBackgroundColor
+        group.widthAnchor.constraint(equalToConstant: Layout.contentWidth).isActive = true
+
+        let listContainer = NSView()
+        listContainer.translatesAutoresizingMaskIntoConstraints = false
+
+        let listStack = NSStackView()
+        listStack.orientation = .vertical
+        listStack.alignment = .width
+        listStack.spacing = 0
+        listStack.translatesAutoresizingMaskIntoConstraints = false
+        listStack.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 8, right: 12)
+        appScopeListStack = listStack
+
+        listContainer.addSubview(listStack)
+        NSLayoutConstraint.activate([
+            listStack.leadingAnchor.constraint(equalTo: listContainer.leadingAnchor),
+            listStack.trailingAnchor.constraint(equalTo: listContainer.trailingAnchor),
+            listStack.topAnchor.constraint(equalTo: listContainer.topAnchor),
+            listStack.bottomAnchor.constraint(equalTo: listContainer.bottomAnchor),
+        ])
+
+        if let contentView = group.contentView {
+            contentView.addSubview(listContainer)
+            NSLayoutConstraint.activate([
+                listContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 4),
+                listContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -4),
+                listContainer.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+                listContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
+            ])
+        }
+        outer.addArrangedSubview(group)
+
+        // Render initially after the view is in the hierarchy.
+        DispatchQueue.main.async { [weak self] in
+            self?.reloadAppScopeList()
+        }
+        return outer
+    }
+
+    private func makeAppScopeCustomSection() -> NSView {
+        let outer = NSStackView()
+        outer.orientation = .vertical
+        outer.alignment = .left
+        outer.spacing = 8
+        outer.widthAnchor.constraint(equalToConstant: Layout.contentWidth).isActive = true
+
+        let title = NSTextField(labelWithString: L10n.text(
+            "Custom apps",
+            "自定义应用"
+        ))
+        title.font = .systemFont(ofSize: 14, weight: .semibold)
+        title.textColor = .labelColor
+        outer.addArrangedSubview(title)
+
+        let group = NSBox()
+        group.boxType = .custom
+        group.borderWidth = 1
+        group.cornerRadius = 10
+        group.borderColor = .separatorColor
+        group.fillColor = .controlBackgroundColor
+        group.widthAnchor.constraint(equalToConstant: Layout.contentWidth).isActive = true
+
+        let inner = NSStackView()
+        inner.orientation = .vertical
+        inner.alignment = .width
+        inner.spacing = 8
+        inner.translatesAutoresizingMaskIntoConstraints = false
+        inner.edgeInsets = NSEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
+
+        let empty = NSTextField(labelWithString: L10n.text(
+            "No custom apps yet. Add your terminals, editors, or chat tools below.",
+            "还没有自定义应用。在下方添加你的终端、编辑器或聊天工具。"
+        ))
+        empty.font = .systemFont(ofSize: 12)
+        empty.textColor = .tertiaryLabelColor
+        empty.isHidden = true
+        appScopeEmptyLabel = empty
+        inner.addArrangedSubview(empty)
+
+        let customStack = NSStackView()
+        customStack.orientation = .vertical
+        customStack.alignment = .width
+        customStack.spacing = 6
+        customStack.translatesAutoresizingMaskIntoConstraints = false
+        inner.addArrangedSubview(customStack)
+        appScopeCustomStack = customStack
+
+        let addManual = NSButton(title: L10n.text("Add by bundle ID…", "按 Bundle ID 添加…"),
+                                 target: self, action: #selector(addCustomAppManually))
+        let addFront = NSButton(title: L10n.text("Add current foreground app", "添加当前前台应用"),
+                                target: self, action: #selector(addCustomAppFromFrontmost))
+        let dropHint = NSTextField(labelWithString: L10n.text(
+            "Tip: drag a .app from Finder onto this panel to add it.",
+            "提示：把 .app 从访达拖到这个面板即可添加。"
+        ))
+        dropHint.font = .systemFont(ofSize: 11)
+        dropHint.textColor = .tertiaryLabelColor
+
+        let buttonRow = NSStackView(views: [addManual, addFront, flexibleSpacer()])
+        buttonRow.orientation = .horizontal
+        buttonRow.spacing = 8
+        inner.addArrangedSubview(buttonRow)
+        inner.addArrangedSubview(dropHint)
+
+        if let contentView = group.contentView {
+            contentView.addSubview(inner)
+            NSLayoutConstraint.activate([
+                inner.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+                inner.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+                inner.topAnchor.constraint(equalTo: contentView.topAnchor),
+                inner.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            ])
+        }
+        outer.addArrangedSubview(group)
+
+        DispatchQueue.main.async { [weak self] in
+            self?.reloadAppScopeCustomList()
+        }
+        return outer
+    }
+
+    private weak var appScopeCustomStack: NSStackView?
+
+    private func reloadAppScopeList() {
+        guard let stack = appScopeListStack else { return }
+        stack.arrangedSubviews.forEach {
+            stack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        for category in WhitelistEntry.Category.allCases {
+            let header = makeCategoryHeader(category: category)
+            stack.addArrangedSubview(header)
+            if appScopeCategoryExpanded[category] ?? true {
+                let entries = WhitelistCatalog.entries.filter { $0.category == category }
+                for (idx, entry) in entries.enumerated() {
+                    let row = makeWhitelistRow(entry: entry)
+                    stack.addArrangedSubview(row)
+                    if idx < entries.count - 1 {
+                        let sep = makeInsetSeparator()
+                        sep.widthAnchor.constraint(equalToConstant: Layout.contentWidth - 64).isActive = true
+                        stack.addArrangedSubview(sep)
+                    }
+                }
+            }
+            stack.addArrangedSubview(makeInsetSeparator())
+        }
+    }
+
+    private func makeCategoryHeader(category: WhitelistEntry.Category) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 6
+        row.edgeInsets = NSEdgeInsets(top: 4, left: 4, bottom: 4, right: 4)
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        let expanded = appScopeCategoryExpanded[category] ?? true
+        let chevron = NSImageView(image: NSImage(systemSymbolName: expanded ? "chevron.down" : "chevron.right",
+                                                  accessibilityDescription: nil) ?? NSImage())
+        chevron.contentTintColor = .secondaryLabelColor
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.widthAnchor.constraint(equalToConstant: 12).isActive = true
+        chevron.heightAnchor.constraint(equalToConstant: 12).isActive = true
+
+        let label = NSTextField(labelWithString: category.displayName)
+        label.font = .systemFont(ofSize: 12, weight: .semibold)
+        label.textColor = .labelColor
+        label.drawsBackground = true
+        label.backgroundColor = .clear
+
+        let count = WhitelistCatalog.entries.filter { $0.category == category }.count
+        let countLabel = NSTextField(labelWithString: "(\(count))")
+        countLabel.font = .systemFont(ofSize: 11)
+        countLabel.textColor = .tertiaryLabelColor
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        row.addArrangedSubview(chevron)
+        row.addArrangedSubview(label)
+        row.addArrangedSubview(countLabel)
+        row.addArrangedSubview(spacer)
+
+        let click = NSClickGestureRecognizer(target: self, action: #selector(toggleCategory(_:)))
+        click.buttonMask = 0x1
+        let view = ClickableContainer()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.18).cgColor
+        view.layer?.cornerRadius = 4
+        view.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            row.topAnchor.constraint(equalTo: view.topAnchor, constant: 2),
+            row.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -2),
+        ])
+        view.addGestureRecognizer(click)
+        view.representedCategory = category
+        return view
+    }
+
+    private func makeWhitelistRow(entry: WhitelistEntry) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.alignment = .firstBaseline  // for label baselines
+        row.distribution = .fill
+        row.spacing = 12
+        row.edgeInsets = NSEdgeInsets(top: 6, left: 24, bottom: 6, right: 8)
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        // Fixed-width checkbox column so the display name column lines up.
+        let checkbox = NSButton(checkboxWithTitle: entry.displayName,
+                                target: self, action: #selector(toggleWhitelistEntry(_:)))
+        checkbox.state = config.enabledDefaultApps.contains(entry.bundleID) ? .on : .off
+        checkbox.identifier = NSUserInterfaceItemIdentifier(entry.bundleID)
+        checkbox.translatesAutoresizingMaskIntoConstraints = false
+        checkbox.widthAnchor.constraint(equalToConstant: 200).isActive = true
+
+        // Fixed-width bundle ID column for the same reason.
+        let bid = NSTextField(labelWithString: entry.bundleID)
+        bid.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        bid.textColor = .tertiaryLabelColor
+        bid.translatesAutoresizingMaskIntoConstraints = false
+        bid.widthAnchor.constraint(equalToConstant: 280).isActive = true
+        bid.lineBreakMode = .byTruncatingMiddle
+
+        let noteText = entry.note ?? ""
+        let note = NSTextField(labelWithString: noteText)
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .tertiaryLabelColor
+        note.isHidden = noteText.isEmpty
+        note.translatesAutoresizingMaskIntoConstraints = false
+        note.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        row.addArrangedSubview(checkbox)
+        row.addArrangedSubview(bid)
+        row.addArrangedSubview(note)
+        return row
+    }
+
+    private func reloadAppScopeCustomList() {
+        guard let stack = appScopeCustomStack else { return }
+        stack.arrangedSubviews.forEach {
+            stack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        appScopeEmptyLabel?.isHidden = !config.customApps.isEmpty
+        for (idx, app) in config.customApps.enumerated() {
+            let row = makeCustomAppRow(app: app)
+            stack.addArrangedSubview(row)
+            if idx < config.customApps.count - 1 {
+                let sep = makeInsetSeparator()
+                sep.widthAnchor.constraint(equalToConstant: Layout.contentWidth - 64).isActive = true
+                stack.addArrangedSubview(sep)
+            }
+        }
+    }
+
+    private func makeCustomAppRow(app: CustomApp) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 10
+        row.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
+
+        let name = NSTextField(labelWithString: app.displayName)
+        name.font = .systemFont(ofSize: 13, weight: .medium)
+        name.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let bid = NSTextField(labelWithString: app.bundleID)
+        bid.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        bid.textColor = .secondaryLabelColor
+        bid.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let remove = NSButton(title: L10n.text("Remove", "移除"),
+                              target: self, action: #selector(removeCustomApp(_:)))
+        remove.bezelStyle = .inline
+        remove.contentTintColor = .systemRed
+        remove.identifier = NSUserInterfaceItemIdentifier(app.id)
+
+        row.addArrangedSubview(name)
+        row.addArrangedSubview(bid)
+        row.addArrangedSubview(flexibleSpacer())
+        row.addArrangedSubview(remove)
+        return row
+    }
+
+    @objc private func toggleCategory(_ gr: NSClickGestureRecognizer) {
+        guard let view = gr.view as? ClickableContainer,
+              let cat = view.representedCategory else { return }
+        appScopeCategoryExpanded[cat] = !(appScopeCategoryExpanded[cat] ?? true)
+        reloadAppScopeList()
+    }
+
+    @objc private func toggleWhitelistEntry(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue else { return }
+        if sender.state == .on {
+            config.enabledDefaultApps.insert(id)
+        } else {
+            config.enabledDefaultApps.remove(id)
+        }
+        config.apps = config.effectiveApps
+        scheduleAutoSave()
+    }
+
+    @objc private func removeCustomApp(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue else { return }
+        config.customApps.removeAll { $0.id == id }
+        config.apps = config.effectiveApps
+        reloadAppScopeCustomList()
+        scheduleAutoSave()
+    }
+
+    @objc private func addCustomAppManually() {
+        let alert = NSAlert()
+        alert.messageText = L10n.text("Add custom app", "添加自定义应用")
+        alert.informativeText = L10n.text(
+            "Enter the app's bundle ID (found in /Applications/Some.app/Contents/Info.plist as CFBundleIdentifier).",
+            "请输入应用的 Bundle ID（在 /Applications/xxx.app/Contents/Info.plist 的 CFBundleIdentifier 字段）。"
+        )
+        alert.alertStyle = .informational
+
+        let nameField = NSTextField(string: "")
+        nameField.placeholderString = L10n.text("Display name (e.g. Trae)", "显示名（例如 Trae）")
+        nameField.widthAnchor.constraint(equalToConstant: 320).isActive = true
+
+        let bidField = NSTextField(string: "")
+        bidField.placeholderString = L10n.text("Bundle ID (e.g. com.trae.app)", "Bundle ID（例如 com.trae.app）")
+        bidField.widthAnchor.constraint(equalToConstant: 320).isActive = true
+
+        let stack = NSStackView(views: [nameField, bidField])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
+        alert.accessoryView = stack
+        alert.addButton(withTitle: L10n.text("Add", "添加"))
+        alert.addButton(withTitle: L10n.text("Cancel", "取消"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let trimmedBid = bidField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBid.isEmpty else {
+            showValidationError(L10n.text("Bundle ID cannot be empty.", "Bundle ID 不能为空。"))
+            return
+        }
+        if duplicateBundleID(trimmedBid) {
+            showValidationError(L10n.text("This app is already in the list.", "该应用已在列表中。"))
+            return
+        }
+        let displayName = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let app = CustomApp(
+            id: "custom-\(UUID().uuidString)",
+            bundleID: trimmedBid,
+            displayName: displayName.isEmpty ? trimmedBid : displayName,
+            note: nil)
+        config.customApps.append(app)
+        config.apps = config.effectiveApps
+        reloadAppScopeCustomList()
+        scheduleAutoSave()
+    }
+
+    @objc private func addCustomAppFromFrontmost() {
+        let bid = Frontmost.bundleID()
+        guard !bid.isEmpty else {
+            showValidationError(L10n.text("Could not read the foreground app's bundle ID.", "无法读取前台应用的 Bundle ID。"))
+            return
+        }
+        if duplicateBundleID(bid) {
+            showValidationError(L10n.text("This app is already in the list.", "该应用已在列表中。"))
+            return
+        }
+        let displayName = frontmostAppDisplayName() ?? bid
+        let app = CustomApp(id: "custom-\(UUID().uuidString)",
+                            bundleID: bid,
+                            displayName: displayName,
+                            note: L10n.text("Added from current foreground app", "从当前前台应用添加"))
+        config.customApps.append(app)
+        config.apps = config.effectiveApps
+        reloadAppScopeCustomList()
+        scheduleAutoSave()
+    }
+
+    private func duplicateBundleID(_ bid: String) -> Bool {
+        if WhitelistCatalog.defaultBundleIDs.contains(bid) { return true }
+        return config.customApps.contains { $0.bundleID.caseInsensitiveCompare(bid) == .orderedSame }
+    }
+
+    private func frontmostAppDisplayName() -> String? {
+        if let app = NSWorkspace.shared.frontmostApplication {
+            return app.localizedName
+        }
+        return nil
+    }
+
+    @objc private func modeControlChanged() {
+        let newMode: AppMode
+        switch modeControlInScope.selectedSegment {
+        case 0: newMode = .whitelist
+        case 1: newMode = .global
+        case 2: newMode = .off
+        default: return
+        }
+        if newMode == .global, config.mode != .global {
+            if !confirmGlobalMode() {
+                // Sync the on-screen control back to the actual config.
+                syncModeControls()
+                return
+            }
+        }
+        config.mode = newMode
+        // Mirror to the General page's segmented control so both stay in sync.
+        syncModeControls()
+        scheduleAutoSave()
+    }
+
+    private func syncModeControls() {
+        let seg: Int
+        switch config.mode {
+        case .whitelist: seg = 0
+        case .global: seg = 1
+        case .off: seg = 2
+        }
+        if modeControl.selectedSegment != seg {
+            modeControl.selectedSegment = seg
+        }
+        if modeControlInScope.selectedSegment != seg {
+            modeControlInScope.selectedSegment = seg
+        }
+    }
+
+    private func confirmGlobalMode() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = L10n.text(
+            "Trigger in every app?",
+            "在所有应用里触发？"
+        )
+        alert.informativeText = L10n.text(
+            "Yes Engineer will send Return (and any configured text) to whatever app is in the foreground. This can submit half-typed messages, send chat replies, or trigger destructive actions in any app. Use Whitelist if you only want AI coding apps to respond.",
+            "启用后，Yes 工程师会在任何前台应用里发送回车（以及配置的输入内容）。这可能提交未写完的消息、发出聊天回复，或在任意应用里触发不可撤销的操作。如果只想让 AI 编程应用响应，请改用“白名单”模式。"
+        )
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L10n.text("Enable All apps", "启用所有应用"))
+        alert.addButton(withTitle: L10n.text("Cancel", "取消"))
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private func section(title: String, rows: [NSView]) -> NSView {
@@ -636,7 +1148,7 @@ final class SettingsWindowController: NSWindowController {
         pauseAllSwitch.state = config.paused ? .on : .off
         pauseSlapSwitch.state = config.pauseSlapActions ? .on : .off
         pauseHotkeysSwitch.state = config.pauseHotkeys ? .on : .off
-        modeControl.selectedSegment = config.mode == .whitelist ? 0 : 1
+        syncModeControls()
         feedbackControl.selectedSegment = FeedbackMode.allCases.firstIndex(of: config.feedbackMode) ?? 0
         autoRequestAXSwitch.state = config.autoRequestAccessibility ? .on : .off
         reloadActionControls()
@@ -738,7 +1250,14 @@ final class SettingsWindowController: NSWindowController {
         next.paused = pauseAllSwitch.state == .on
         next.pauseSlapActions = pauseSlapSwitch.state == .on
         next.pauseHotkeys = pauseHotkeysSwitch.state == .on
-        next.mode = modeControl.selectedSegment == 1 ? .global : .whitelist
+        next.mode = {
+            switch modeControl.selectedSegment {
+            case 0: return .whitelist
+            case 1: return .global
+            case 2: return .off
+            default: return .whitelist
+            }
+        }()
         next.feedbackMode = FeedbackMode.allCases[safe: feedbackControl.selectedSegment] ?? .toast
         next.autoRequestAccessibility = autoRequestAXSwitch.state == .on
 
@@ -1134,10 +1653,51 @@ extension SettingsWindowController: NSWindowDelegate, NSTextFieldDelegate {
         commitChanges(showValidationErrors: true)
         stopHotkeyRecording()
     }
+
+    func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self]) as? [URL] else {
+            return []
+        }
+        return urls.contains(where: { $0.pathExtension.lowercased() == "app" }) ? .copy : []
+    }
+
+    func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self]) as? [URL] else {
+            return false
+        }
+        var added = 0
+        for url in urls where url.pathExtension.lowercased() == "app" {
+            if let app = makeCustomAppFromAppURL(url) {
+                if duplicateBundleID(app.bundleID) { continue }
+                config.customApps.append(app)
+                added += 1
+            }
+        }
+        if added > 0 {
+            config.apps = config.effectiveApps
+            reloadAppScopeCustomList()
+            scheduleAutoSave()
+            return true
+        }
+        return false
+    }
+
+    private func makeCustomAppFromAppURL(_ url: URL) -> CustomApp? {
+        guard let bid = Bundle(url: url)?.bundleIdentifier else { return nil }
+        let displayName = (url.deletingPathExtension().lastPathComponent)
+        return CustomApp(id: "custom-\(UUID().uuidString)",
+                         bundleID: bid,
+                         displayName: displayName,
+                         note: L10n.text("Added by dragging the app", "通过拖拽应用添加"))
+    }
 }
 
 private final class FlippedView: NSView {
     override var isFlipped: Bool { true }
+}
+
+private final class ClickableContainer: NSView {
+    var representedCategory: WhitelistEntry.Category?
 }
 
 private extension Array {

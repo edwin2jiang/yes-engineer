@@ -112,7 +112,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
 
         let modeMenu = NSMenu()
-        for m in [AppMode.whitelist, .global] {
+        for m in AppMode.allCases {
             let item = NSMenuItem(title: modeName(m), action: #selector(setMode(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = m.rawValue
@@ -232,8 +232,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     private func modeName(_ m: AppMode) -> String {
         switch m {
-        case .whitelist: return L10n.text("All AI coding apps", "所有 AI 编程应用")
+        case .whitelist: return L10n.text("Whitelist (AI coding apps)", "白名单（AI 编程应用）")
         case .global: return L10n.text("All apps", "所有应用")
+        case .off: return L10n.text("Off (log only)", "关闭（仅记录）")
         }
     }
 
@@ -270,13 +271,15 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         switch cfg.mode {
         case .whitelist:
             let bid = Frontmost.bundleID()
-            guard cfg.apps.contains(bid) else {
+            guard cfg.effectiveApps.contains(bid) else {
                 log.info("ignored: front=\(bid, privacy: .public) not whitelisted")
                 return
             }
             performAction(id: cfg.slapActionID)
         case .global:
             performAction(id: cfg.slapActionID)
+        case .off:
+            log.info("slap received but mode=off (front=\(Frontmost.bundleID(), privacy: .public))")
         }
     }
 
@@ -289,13 +292,15 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         switch cfg.mode {
         case .whitelist:
             let bid = Frontmost.bundleID()
-            guard cfg.apps.contains(bid) else {
+            guard cfg.effectiveApps.contains(bid) else {
                 log.info("ignored \(source, privacy: .public): front=\(bid, privacy: .public) not whitelisted")
                 return
             }
             performAction(id: actionID)
         case .global:
             performAction(id: actionID)
+        case .off:
+            log.info("ignored \(source, privacy: .public): mode=off")
         }
     }
 
@@ -344,9 +349,29 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func setMode(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
               let m = AppMode(rawValue: raw) else { return }
+        if m == .global, store.config.mode != .global {
+            let proceed = confirmGlobalMode()
+            if !proceed { return }
+        }
         var cfg = store.config
         cfg.mode = m
         applyConfig(cfg)
+    }
+
+    private func confirmGlobalMode() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = L10n.text(
+            "Trigger in every app?",
+            "在所有应用里触发？"
+        )
+        alert.informativeText = L10n.text(
+            "Yes Engineer will send Return (and any configured text) to whatever app is in the foreground. This can submit half-typed messages, send chat replies, or trigger destructive actions in any app. Use the Whitelist mode if you only want AI coding apps to respond.",
+            "启用后，Yes 工程师会在任何前台应用里发送回车（以及配置的输入内容）。这可能提交未写完的消息、发出聊天回复，或在任意应用里触发不可撤销的操作。如果只想让 AI 编程应用响应，请改用“白名单”模式。"
+        )
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L10n.text("Enable All apps", "启用所有应用"))
+        alert.addButton(withTitle: L10n.text("Cancel", "取消"))
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     @objc private func setSlapAction(_ sender: NSMenuItem) {

@@ -36,6 +36,10 @@ enum AppEnvironment {
     }
 
     static var requestedSettingsPage: Int {
-        values["YES_ENGINEER_SETTINGS_PAGE"] == "actions" ? 1 : 0
+        switch values["YES_ENGINEER_SETTINGS_PAGE"] {
+        case "actions": return 2
+        case "appscope", "app_scope", "app-scope": return 1
+        default: return 0
+        }
     }
 }
