@@ -147,128 +147,17 @@ jobs:
           echo "artifacts_dir=${ART_DIR}" >> "${GITHUB_OUTPUT}"
 
       - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "Yes Engineer ${{ github.ref_name }}"
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.stage.outputs.artifacts_dir }}/Yes-Engineer-${{ github.ref_name }}.app.zip
+            ${{ steps.stage.outputs.artifacts_dir }}/Yes-Engineer-${{ github.ref_name }}.app.zip.sha256
+            ${{ steps.stage.outputs.artifacts_dir }}/Yes-Engineer-${{ github.ref_name }}.dmg
+            ${{ steps.stage.outputs.artifacts_dir }}/Yes-Engineer-${{ github.ref_name }}.dmg.sha256
+            ${{ steps.stage.outputs.artifacts_dir }}/SHA256SUMS.txt
         env:
-          GH_TOKEN: ${{ github.token }}
-          ART_DIR: ${{ steps.stage.outputs.artifacts_dir }}
-        shell: bash
-        run: |
-          set -euxo pipefail
-          TAG="${{ github.ref_name }}"
-
-          echo "==> TAG=${TAG}"
-          echo "==> ART_DIR=${ART_DIR}"
-          echo "==> listing ART_DIR:"
-          ls -la "${ART_DIR}"
-
-          # Build the upload list from the staged artifacts. Skip files
-          # that were never produced (e.g. DMG build failure).
-          shopt -s nullglob
-          ARTIFACTS=(
-            "${ART_DIR}/Yes-Engineer-${TAG#v}.app.zip"
-            "${ART_DIR}/Yes-Engineer-${TAG#v}.app.zip.sha256"
-            "${ART_DIR}/Yes-Engineer-${TAG#v}.dmg"
-            "${ART_DIR}/Yes-Engineer-${TAG#v}.dmg.sha256"
-          )
-          shopt -u nullglob
-          echo "==> ARTIFACTS array count: ${#ARTIFACTS[@]}"
-          for a in "${ARTIFACTS[@]}"; do
-            if [[ ! -f "${a}" ]]; then
-              echo "::error::Staged artifact missing on disk: ${a}"
-              exit 1
-            fi
-            echo "  - ${a}  ($(wc -c < "${a}") bytes)"
-          done
-
-          # Use the GitHub REST API directly instead of `gh release
-          # create`. The `gh` CLI was observed to silently succeed (exit
-          # 0, no error, run marked successful) while never actually
-          # creating the Release on macos-14 runners. curl against the
-          # REST API gives us explicit error reporting.
-          API="https://api.github.com/repos/${{ github.repository }}"
-          AUTH="Authorization: token ${GH_TOKEN}"
-          CT="Content-Type: application/json"
-          ACCEPT="Accept: application/vnd.github+json"
-
-          # 1) Create the release.
-          echo "==> POST ${API}/releases"
-          CREATE_BODY=$(jq -n \
-            --arg tag "${TAG}" \
-            --arg name "Yes Engineer ${TAG}" \
-            '{tag_name: $tag, name: $name, generate_release_notes: true}')
-          CREATE_RESP=$(curl -sS -X POST \
-            -H "${AUTH}" -H "${CT}" -H "${ACCEPT}" \
-            -d "${CREATE_BODY}" \
-            -w '\n__HTTP_STATUS__:%{http_code}' \
-            "${API}/releases")
-          CREATE_STATUS=$(echo "${CREATE_RESP}" | sed -n 's/^__HTTP_STATUS__://p')
-          CREATE_BODY_OUT=$(echo "${CREATE_RESP}" | sed '$d')
-          echo "==> status=${CREATE_STATUS}"
-          if [[ "${CREATE_STATUS}" == "422" ]]; then
-            # Release already exists (e.g. workflow_dispatch re-run). Fetch
-            # its id and continue with the upload step.
-            echo "==> release already exists, looking it up"
-            GET_RESP=$(curl -sS -H "${AUTH}" -H "${ACCEPT}" \
-              -w '\n__HTTP_STATUS__:%{http_code}' \
-              "${API}/releases/tags/${TAG}")
-            GET_STATUS=$(echo "${GET_RESP}" | sed -n 's/^__HTTP_STATUS__://p')
-            GET_BODY=$(echo "${GET_RESP}" | sed '$d')
-            if [[ "${GET_STATUS}" != "200" ]]; then
-              echo "::error::could not fetch existing release (status=${GET_STATUS}):"
-              echo "${GET_BODY}"
-              exit 1
-            fi
-            RELEASE_ID=$(echo "${GET_BODY}" | jq -r '.id')
-          elif [[ "${CREATE_STATUS}" == "201" ]]; then
-            RELEASE_ID=$(echo "${CREATE_BODY_OUT}" | jq -r '.id')
-            echo "==> created release id=${RELEASE_ID}"
-          else
-            echo "::error::create release failed (status=${CREATE_STATUS}):"
-            echo "${CREATE_BODY_OUT}"
-            exit 1
-          fi
-
-          # 2) Upload each artifact via the asset upload endpoint.
-          for a in "${ARTIFACTS[@]}"; do
-            NAME=$(basename "${a}")
-            CT_HDR="Content-Type: application/octet-stream"
-            echo "==> uploading ${NAME}"
-            UP_STATUS=$(curl -sS -X POST \
-              -H "${AUTH}" -H "${CT_HDR}" \
-              --data-binary "@${a}" \
-              -w '%{http_code}' -o /tmp/up.json \
-              "${API}/releases/${RELEASE_ID}/assets?name=${NAME}")
-            if [[ "${UP_STATUS}" != "201" ]]; then
-              echo "::error::upload ${NAME} failed (status=${UP_STATUS}):"
-              cat /tmp/up.json
-              exit 1
-            fi
-            echo "  ok ($(jq -r .size /tmp/up.json) bytes)"
-          done
-
-          # 3) Upload the combined SHA256SUMS.txt.
-          SUMS_FILE="${ART_DIR}/SHA256SUMS.txt"
-          : > "${SUMS_FILE}"
-          for a in "${ARTIFACTS[@]}"; do
-            if [[ "${a}" == *.sha256 ]]; then continue; fi
-            shasum -a 256 "${a}" >> "${SUMS_FILE}"
-          done
-          if [[ -s "${SUMS_FILE}" ]]; then
-            echo "==> uploading SHA256SUMS.txt"
-            UP_STATUS=$(curl -sS -X POST \
-              -H "Authorization: token ${GH_TOKEN}" \
-              -H "Content-Type: application/octet-stream" \
-              --data-binary "@${SUMS_FILE}" \
-              -w '%{http_code}' -o /tmp/up.json \
-              "${API}/releases/${RELEASE_ID}/assets?name=SHA256SUMS.txt")
-            if [[ "${UP_STATUS}" != "201" ]]; then
-              echo "::error::upload SHA256SUMS.txt failed (status=${UP_STATUS}):"
-              cat /tmp/up.json
-              exit 1
-            fi
-          fi
-
-          # Final sanity dump.
-          echo "==> final release assets:"
-          curl -sS -H "${AUTH}" -H "${ACCEPT}" \
-            "${API}/releases/${RELEASE_ID}" \
-            | jq -r '.assets[] | "  - \(.name)  (\(.size) bytes)"'
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
