@@ -10,6 +10,8 @@ final class HotkeyRecorderView: NSStackView {
     private(set) var isRecording = false
 
     var onRecordingChanged: ((Bool) -> Void)?
+    var onHotkeyChanged: ((HotkeySpec) -> Void)?
+    var validationMessage: ((HotkeySpec) -> String?)?
 
     init(hotkey: HotkeySpec, width: CGFloat) {
         self.hotkey = hotkey
@@ -26,20 +28,20 @@ final class HotkeyRecorderView: NSStackView {
         displayButton.bezelStyle = .rounded
         displayButton.target = self
         displayButton.action = #selector(beginRecording)
-        displayButton.toolTip = "点击后录制新的快捷键"
+        displayButton.toolTip = L10n.text("Click to record a new shortcut", "点击后录制新的快捷键")
         displayButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        recordButton.title = "录制"
+        recordButton.title = L10n.text("Record", "录制")
         recordButton.bezelStyle = .rounded
         recordButton.controlSize = .small
         recordButton.target = self
         recordButton.action = #selector(toggleRecording)
-        recordButton.toolTip = "录制下一组快捷键"
+        recordButton.toolTip = L10n.text("Record the next shortcut", "录制下一组快捷键")
         recordButton.widthAnchor.constraint(equalToConstant: 54).isActive = true
 
         addArrangedSubview(displayButton)
         addArrangedSubview(recordButton)
-        setAccessibilityLabel("快捷键 \(hotkey.displayName)")
+        setAccessibilityLabel(L10n.format("Shortcut %@", "快捷键 %@", hotkey.displayName))
     }
 
     required init(coder: NSCoder) {
@@ -55,6 +57,10 @@ final class HotkeyRecorderView: NSStackView {
         return hotkey
     }
 
+    func currentHotkey() -> HotkeySpec {
+        hotkey
+    }
+
     func stopRecording() {
         guard isRecording else { return }
         finishRecording()
@@ -66,9 +72,9 @@ final class HotkeyRecorderView: NSStackView {
         HotkeyRecorderView.activeRecorder = self
 
         isRecording = true
-        displayButton.title = "请按快捷键…"
+        displayButton.title = L10n.text("Press shortcut…", "请按快捷键…")
         displayButton.contentTintColor = .systemOrange
-        recordButton.title = "取消"
+        recordButton.title = L10n.text("Cancel", "取消")
         onRecordingChanged?(true)
 
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -97,12 +103,20 @@ final class HotkeyRecorderView: NSStackView {
         let modifiers = Self.hotkeyModifiers(from: event.modifierFlags)
         guard modifiers != 0 else {
             NSSound.beep()
-            displayButton.title = "请组合修饰键"
+            displayButton.title = L10n.text("Include a modifier", "请组合修饰键")
             return
         }
 
-        hotkey = HotkeySpec(keyCode: UInt32(event.keyCode), modifiers: modifiers)
+        let candidate = HotkeySpec(keyCode: UInt32(event.keyCode), modifiers: modifiers)
+        if let message = validationMessage?(candidate) {
+            NSSound.beep()
+            displayButton.title = L10n.text("Shortcut unavailable", "快捷键不可用")
+            showConflict(message)
+            return
+        }
+        hotkey = candidate
         finishRecording()
+        onHotkeyChanged?(hotkey)
     }
 
     private func finishRecording() {
@@ -113,12 +127,23 @@ final class HotkeyRecorderView: NSStackView {
         isRecording = false
         displayButton.title = hotkey.displayName
         displayButton.contentTintColor = nil
-        recordButton.title = "录制"
-        setAccessibilityLabel("快捷键 \(hotkey.displayName)")
+        recordButton.title = L10n.text("Record", "录制")
+        setAccessibilityLabel(L10n.format("Shortcut %@", "快捷键 %@", hotkey.displayName))
         if HotkeyRecorderView.activeRecorder === self {
             HotkeyRecorderView.activeRecorder = nil
         }
         onRecordingChanged?(false)
+    }
+
+    private func showConflict(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = L10n.text("Shortcut conflict", "快捷键冲突")
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.runModal()
+        if isRecording {
+            displayButton.title = L10n.text("Press another shortcut…", "请按其他快捷键…")
+        }
     }
 
     private static func hotkeyModifiers(from flags: NSEvent.ModifierFlags) -> UInt32 {

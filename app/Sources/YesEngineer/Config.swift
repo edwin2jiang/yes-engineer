@@ -10,9 +10,9 @@ enum FeedbackMode: String, Codable, CaseIterable {
 
     var menuTitle: String {
         switch self {
-        case .toast: return "Toast 提醒"
-        case .alert: return "弹窗提醒"
-        case .off: return "关闭"
+        case .toast: return L10n.text("Toast", "Toast 提醒")
+        case .alert: return L10n.text("Alert", "弹窗提醒")
+        case .off: return L10n.text("Off", "关闭")
         }
     }
 }
@@ -148,17 +148,26 @@ struct TextAction: Codable, Equatable {
 
     var menuTitle: String {
         if input.isEmpty {
-            return "\(title)（只按回车）"
+            return L10n.format("%@ (Return only)", "%@（只按回车）", title)
         }
-        return "\(title)：\(input)"
+        return L10n.format("%@: %@", "%@：%@", title, input)
     }
 
     static let defaultSlapActionID = "yes"
 
     static let defaults: [TextAction] = [
-        TextAction(id: "confirm", title: "确认 / 继续", input: "", hotkey: .confirm),
-        TextAction(id: "yes", title: "输入 yes", input: "yes", hotkey: .yes),
-        TextAction(id: "continue", title: "输入 continue", input: "continue", hotkey: .continuePrompt),
+        TextAction(id: "confirm",
+                   title: L10n.text("Confirm / Continue", "确认 / 继续"),
+                   input: "",
+                   hotkey: .confirm),
+        TextAction(id: "yes",
+                   title: L10n.text("Type yes", "输入 yes"),
+                   input: "yes",
+                   hotkey: .yes),
+        TextAction(id: "continue",
+                   title: L10n.text("Type continue", "输入 continue"),
+                   input: "continue",
+                   hotkey: .continuePrompt),
     ]
 }
 
@@ -251,14 +260,24 @@ final class ConfigStore {
 
     init() {
         let fm = FileManager.default
-        let dir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("SlapToYes", isDirectory: true)
+        let configOverride = ProcessInfo.processInfo.environment["YES_ENGINEER_CONFIG_DIR"]
+        let base = configOverride.map {
+            URL(fileURLWithPath: $0, isDirectory: true)
+        } ?? fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let dir = base.appendingPathComponent("YesEngineer", isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         self.url = dir.appendingPathComponent("config.json")
 
-        if let data = try? Data(contentsOf: url),
+        let legacyURL = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("SlapToYes", isDirectory: true)
+            .appendingPathComponent("config.json")
+        let sourceURL = fm.fileExists(atPath: url.path) || configOverride != nil ? url : legacyURL
+        if let data = try? Data(contentsOf: sourceURL),
            let cfg = try? JSONDecoder().decode(AppConfig.self, from: data) {
             self.config = cfg
+            if sourceURL == legacyURL {
+                save(cfg)
+            }
         } else {
             self.config = AppConfig()
         }

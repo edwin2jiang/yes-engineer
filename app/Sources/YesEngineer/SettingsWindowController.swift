@@ -14,6 +14,8 @@ final class SettingsWindowController: NSWindowController {
     private var config: AppConfig
     private let configURL: URL
     private var actionRows: [SettingsActionRowView] = []
+    private var autoSaveTimer: Timer?
+    private var isLoadingControls = false
 
     private let sensitivitySlider = NSSlider(value: 0.144,
                                              minValue: SensitivitySliderView.minValue,
@@ -23,10 +25,13 @@ final class SettingsWindowController: NSWindowController {
     private let sensitivityValue = NSTextField(labelWithString: "")
     private let cooldownField = NSTextField(string: "")
     private let cooldownStepper = NSStepper()
-    private let pauseAllSwitch = NSButton(checkboxWithTitle: "全部暂停", target: nil, action: nil)
-    private let pauseSlapSwitch = NSButton(checkboxWithTitle: "暂停拍击动作", target: nil, action: nil)
-    private let pauseHotkeysSwitch = NSButton(checkboxWithTitle: "暂停快捷键", target: nil, action: nil)
-    private let modeControl = NSSegmentedControl(labels: ["AI 编程应用", "所有应用"],
+    private let pauseAllSwitch = NSButton(checkboxWithTitle: L10n.text("Pause everything", "全部暂停"), target: nil, action: nil)
+    private let pauseSlapSwitch = NSButton(checkboxWithTitle: L10n.text("Pause tap actions", "暂停拍击动作"), target: nil, action: nil)
+    private let pauseHotkeysSwitch = NSButton(checkboxWithTitle: L10n.text("Pause shortcuts", "暂停快捷键"), target: nil, action: nil)
+    private let modeControl = NSSegmentedControl(labels: [
+        L10n.text("AI coding apps", "AI 编程应用"),
+        L10n.text("All apps", "所有应用"),
+    ],
                                                  trackingMode: .selectOne,
                                                  target: nil,
                                                  action: nil)
@@ -36,19 +41,22 @@ final class SettingsWindowController: NSWindowController {
                                                      target: nil,
                                                      action: nil)
     private let actionRowsStack = NSStackView()
-    private let deleteActionButton = NSButton(title: "删除所选", target: nil, action: nil)
+    private let deleteActionButton = NSButton(title: L10n.text("Delete selected", "删除所选"), target: nil, action: nil)
     private let daemonStatusLabel = NSTextField(labelWithString: "")
     private let accessibilityStatusLabel = NSTextField(labelWithString: "")
-    private let autoRequestAXSwitch = NSButton(checkboxWithTitle: "自动提示辅助功能授权", target: nil, action: nil)
+    private let autoRequestAXSwitch = NSButton(checkboxWithTitle: L10n.text("Prompt for Accessibility permission automatically", "自动提示辅助功能授权"), target: nil, action: nil)
     private let configPathButton = NSButton()
-    private let pageControl = NSSegmentedControl(labels: ["通用", "动作"],
+    private let pageControl = NSSegmentedControl(labels: [
+        L10n.text("General", "通用"),
+        L10n.text("Actions", "动作"),
+    ],
                                                  trackingMode: .selectOne,
                                                  target: nil,
                                                  action: nil)
     private let pageContainer = NSView()
     private var pageViews: [NSView] = []
 
-    var onSave: ((AppConfig) -> Void)?
+    var onChange: ((AppConfig) -> Void)?
     var onRequestAccessibility: (() -> Void)?
     var onReinstallDaemon: (() -> Void)?
     var onHotkeyRecordingChanged: ((Bool) -> Void)?
@@ -61,7 +69,7 @@ final class SettingsWindowController: NSWindowController {
                               styleMask: [.titled, .closable, .miniaturizable, .resizable],
                               backing: .buffered,
                               defer: false)
-        window.title = "Always Yes 设置"
+        window.title = L10n.text("Yes Engineer Settings", "Yes Engineer 设置")
         window.isReleasedWhenClosed = false
         window.minSize = Layout.minWindowSize
         super.init(window: window)
@@ -81,12 +89,34 @@ final class SettingsWindowController: NSWindowController {
     }
 
     func refreshStatus() {
-        daemonStatusLabel.stringValue = "守护进程 \(DaemonInstaller.statusDescription)"
-        accessibilityStatusLabel.stringValue = "辅助功能 \(Permissions.isAccessibilityTrusted ? "已授权" : "未授权")"
+        daemonStatusLabel.stringValue = L10n.format("Daemon: %@", "守护进程 %@", DaemonInstaller.statusDescription)
+        accessibilityStatusLabel.stringValue = L10n.format(
+            "Accessibility: %@",
+            "辅助功能 %@",
+            Permissions.isAccessibilityTrusted
+                ? L10n.text("Granted", "已授权")
+                : L10n.text("Not granted", "未授权")
+        )
         daemonStatusLabel.textColor = .secondaryLabelColor
         accessibilityStatusLabel.textColor = Permissions.isAccessibilityTrusted ? .systemGreen : .systemOrange
         daemonStatusLabel.font = .systemFont(ofSize: 13, weight: .medium)
         accessibilityStatusLabel.font = .systemFont(ofSize: 13, weight: .medium)
+    }
+
+    func writeScreenshot(to url: URL) throws {
+        guard let view = window?.contentView else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        window?.makeFirstResponder(nil)
+        view.layoutSubtreeIfNeeded()
+        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        guard let data = bitmap.representation(using: .png, properties: [:]) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        try data.write(to: url, options: .atomic)
     }
 
     private func buildUI() {
@@ -132,12 +162,15 @@ final class SettingsWindowController: NSWindowController {
         icon.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(icon)
 
-        let title = NSTextField(labelWithString: "Always Yes")
+        let title = NSTextField(labelWithString: "Yes Engineer")
         title.font = .systemFont(ofSize: 22, weight: .semibold)
         title.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(title)
 
-        let subtitle = NSTextField(labelWithString: "管理拍击、快捷键和 AI 编程应用范围。")
+        let subtitle = NSTextField(labelWithString: L10n.text(
+            "Manage taps, shortcuts, and the AI coding app scope.",
+            "管理拍击、快捷键和 AI 编程应用范围。"
+        ))
         subtitle.font = .systemFont(ofSize: 13)
         subtitle.textColor = .secondaryLabelColor
         subtitle.translatesAutoresizingMaskIntoConstraints = false
@@ -181,7 +214,7 @@ final class SettingsWindowController: NSWindowController {
         wrapper.addSubview(stack)
 
         pageControl.segmentStyle = .rounded
-        pageControl.selectedSegment = 0
+        pageControl.selectedSegment = AppEnvironment.requestedSettingsPage
         pageControl.target = self
         pageControl.action = #selector(pageChanged)
         for i in 0..<pageControl.segmentCount {
@@ -270,13 +303,15 @@ final class SettingsWindowController: NSWindowController {
         let wrapper = NSView()
         wrapper.heightAnchor.constraint(equalToConstant: 58).isActive = true
 
-        let configLabel = NSTextField(labelWithString: "配置文件")
+        let configLabel = NSTextField(labelWithString: L10n.text("Configuration", "配置文件"))
         configLabel.font = .systemFont(ofSize: 11)
         configLabel.textColor = .tertiaryLabelColor
         configLabel.translatesAutoresizingMaskIntoConstraints = false
         wrapper.addSubview(configLabel)
 
-        let abbreviatedPath = (configURL.path as NSString).abbreviatingWithTildeInPath
+        let abbreviatedPath = AppEnvironment.isUITesting
+            ? "~/Library/Application Support/YesEngineer/config.json"
+            : (configURL.path as NSString).abbreviatingWithTildeInPath
         configPathButton.title = abbreviatedPath
         configPathButton.font = .systemFont(ofSize: 11)
         configPathButton.contentTintColor = .linkColor
@@ -287,17 +322,21 @@ final class SettingsWindowController: NSWindowController {
         configPathButton.imageHugsTitle = true
         configPathButton.target = self
         configPathButton.action = #selector(revealConfigFile)
-        configPathButton.toolTip = "在访达中显示 \(configURL.path)"
-        configPathButton.setAccessibilityLabel("在访达中显示配置文件")
+        configPathButton.toolTip = L10n.format("Reveal %@ in Finder", "在访达中显示 %@", configURL.path)
+        configPathButton.setAccessibilityLabel(L10n.text("Reveal configuration file in Finder", "在访达中显示配置文件"))
         configPathButton.translatesAutoresizingMaskIntoConstraints = false
         wrapper.addSubview(configPathButton)
 
-        let restore = NSButton(title: "恢复默认", target: self, action: #selector(restoreDefaults))
-        let close = NSButton(title: "关闭", target: self, action: #selector(closePanel))
-        let save = NSButton(title: "保存", target: self, action: #selector(save))
-        save.keyEquivalent = "\r"
+        let autoSaveLabel = NSTextField(labelWithString: L10n.text(
+            "Changes are saved automatically",
+            "更改会自动保存"
+        ))
+        autoSaveLabel.font = .systemFont(ofSize: 11)
+        autoSaveLabel.textColor = .secondaryLabelColor
+        let restore = NSButton(title: L10n.text("Restore Defaults", "恢复默认"), target: self, action: #selector(restoreDefaults))
+        let close = NSButton(title: L10n.text("Close", "关闭"), target: self, action: #selector(closePanel))
 
-        let buttons = NSStackView(views: [restore, close, save])
+        let buttons = NSStackView(views: [autoSaveLabel, restore, close])
         buttons.orientation = .horizontal
         buttons.alignment = .centerY
         buttons.spacing = 8
@@ -320,18 +359,29 @@ final class SettingsWindowController: NSWindowController {
     }
 
     private func makeAccessSection() -> NSView {
-        let reinstall = NSButton(title: "重新安装守护进程", target: self, action: #selector(reinstallDaemon))
-        let requestAX = NSButton(title: "申请辅助功能权限", target: self, action: #selector(requestAccessibility))
+        let reinstall = NSButton(title: L10n.text("Reinstall Daemon", "重新安装守护进程"), target: self, action: #selector(reinstallDaemon))
+        let requestAX = NSButton(title: L10n.text("Request Accessibility", "申请辅助功能权限"), target: self, action: #selector(requestAccessibility))
         styleSwitch(autoRequestAXSwitch)
+        autoRequestAXSwitch.target = self
+        autoRequestAXSwitch.action = #selector(controlChanged)
 
         let rows = [
-            formRow("辅助功能", horizontalStack([accessibilityStatusLabel, requestAX], spacing: 8),
-                    help: "未授权时，拍击和快捷键不会模拟输入。应用默认会自动提示完成授权。"),
-            formRow("自动提示", autoRequestAXSwitch,
-                    help: "默认开启。应用会定时提示辅助功能授权，直到用户完成授权或关闭此开关。"),
-            formRow("守护进程", horizontalStack([daemonStatusLabel, reinstall], spacing: 8)),
+            formRow(L10n.text("Accessibility", "辅助功能"),
+                    horizontalStack([accessibilityStatusLabel, requestAX], spacing: 8),
+                    help: L10n.text(
+                        "Tap actions and shortcuts cannot simulate input until permission is granted.",
+                        "未授权时，拍击和快捷键不会模拟输入。应用默认会自动提示完成授权。"
+                    )),
+            formRow(L10n.text("Automatic prompt", "自动提示"),
+                    autoRequestAXSwitch,
+                    help: L10n.text(
+                        "Keep prompting until permission is granted or this option is turned off.",
+                        "默认开启。应用会定时提示辅助功能授权，直到用户完成授权或关闭此开关。"
+                    )),
+            formRow(L10n.text("Daemon", "守护进程"),
+                    horizontalStack([daemonStatusLabel, reinstall], spacing: 8)),
         ]
-        return section(title: "权限与状态", rows: rows)
+        return section(title: L10n.text("Permissions & Status", "权限与状态"), rows: rows)
     }
 
     private func makeDetectionSection() -> NSView {
@@ -341,6 +391,7 @@ final class SettingsWindowController: NSWindowController {
         cooldownStepper.increment = 50
         cooldownStepper.target = self
         cooldownStepper.action = #selector(cooldownStepperChanged)
+        cooldownField.delegate = self
 
         sensitivitySlider.isContinuous = true
         sensitivitySlider.target = self
@@ -353,6 +404,10 @@ final class SettingsWindowController: NSWindowController {
 
         modeControl.segmentStyle = .rounded
         feedbackControl.segmentStyle = .rounded
+        modeControl.target = self
+        modeControl.action = #selector(controlChanged)
+        feedbackControl.target = self
+        feedbackControl.action = #selector(controlChanged)
         for i in 0..<modeControl.segmentCount {
             modeControl.setWidth(116, forSegment: i)
         }
@@ -360,31 +415,50 @@ final class SettingsWindowController: NSWindowController {
             feedbackControl.setWidth(86, forSegment: i)
         }
 
-        [pauseAllSwitch, pauseSlapSwitch, pauseHotkeysSwitch].forEach(styleSwitch)
+        [pauseAllSwitch, pauseSlapSwitch, pauseHotkeysSwitch].forEach {
+            styleSwitch($0)
+            $0.target = self
+            $0.action = #selector(controlChanged)
+        }
 
         let sensitivityContent = verticalStack([
             horizontalStack([sensitivitySlider, sensitivityValue], spacing: 10),
-            helpLabel("数值越低越容易触发；数值越高越需要明显拍击。"),
+            helpLabel(L10n.text(
+                "Lower values trigger more easily; higher values require a stronger tap.",
+                "数值越低越容易触发；数值越高越需要明显拍击。"
+            )),
         ], spacing: 4)
 
-        let cooldownContent = horizontalStack([cooldownField, suffixLabel("毫秒"), cooldownStepper], spacing: 8)
+        let cooldownContent = horizontalStack([
+            cooldownField,
+            suffixLabel(L10n.text("ms", "毫秒")),
+            cooldownStepper,
+        ], spacing: 8)
 
         let pauseContent = verticalStack([
             pauseAllSwitch,
             pauseSlapSwitch,
             pauseHotkeysSwitch,
-            helpLabel("全部暂停会同时停止拍击动作和快捷键；单独暂停适合临时保留另一种触发方式。"),
+            helpLabel(L10n.text(
+                "Pause everything, or temporarily pause only taps or shortcuts.",
+                "全部暂停会同时停止拍击动作和快捷键；单独暂停适合临时保留另一种触发方式。"
+            )),
         ], spacing: 8)
 
         let rows = [
-            formRow("灵敏度", sensitivityContent),
-            formRow("冷却时间", cooldownContent),
-            formRow("暂停控制", pauseContent),
-            formRow("应用范围", modeControl, help: "选择“AI 编程应用”时，仅在白名单里的前台应用生效。"),
-            formRow("执行反馈", feedbackControl),
+            formRow(L10n.text("Sensitivity", "灵敏度"), sensitivityContent),
+            formRow(L10n.text("Cooldown", "冷却时间"), cooldownContent),
+            formRow(L10n.text("Pause controls", "暂停控制"), pauseContent),
+            formRow(L10n.text("App scope", "应用范围"),
+                    modeControl,
+                    help: L10n.text(
+                        "AI coding apps limits actions to the built-in foreground app allowlist.",
+                        "选择“AI 编程应用”时，仅在白名单里的前台应用生效。"
+                    )),
+            formRow(L10n.text("Feedback", "执行反馈"), feedbackControl),
         ]
 
-        return section(title: "触发与行为", rows: rows)
+        return section(title: L10n.text("Triggers & Behavior", "触发与行为"), rows: rows)
     }
 
     private func makeActionsSection() -> NSView {
@@ -398,15 +472,18 @@ final class SettingsWindowController: NSWindowController {
         deleteActionButton.target = self
         deleteActionButton.action = #selector(deleteSelectedAction)
 
-        let addAction = NSButton(title: "新增动作", target: self, action: #selector(addAction))
-        let restore = NSButton(title: "恢复默认动作", target: self, action: #selector(restoreDefaultActions))
+        let addAction = NSButton(title: L10n.text("Add Action", "新增动作"), target: self, action: #selector(addAction))
+        let restore = NSButton(title: L10n.text("Restore Default Actions", "恢复默认动作"), target: self, action: #selector(restoreDefaultActions))
         let rows = [
-            formRow("拍击时执行", slapActionPopup),
+            formRow(L10n.text("Run on tap", "拍击时执行"), slapActionPopup),
             fullWidthRow(actionRowsStack),
             fullWidthRow(horizontalStack([addAction, deleteActionButton, restore, flexibleSpacer()], spacing: 8)),
-            fullWidthRow(helpLabel("点击快捷键框或“录制”，再按下一组组合键；按 Esc 取消。输入内容为空时只按回车。")),
+            fullWidthRow(helpLabel(L10n.text(
+                "Click a shortcut field or Record, then press a combination. Press Esc to cancel. Empty input sends Return only.",
+                "点击快捷键框或“录制”，再按下一组组合键；按 Esc 取消。输入内容为空时只按回车。"
+            ))),
         ]
-        return section(title: "自动化动作", rows: rows)
+        return section(title: L10n.text("Automation Actions", "自动化动作"), rows: rows)
     }
 
     private func section(title: String, rows: [NSView]) -> NSView {
@@ -550,6 +627,8 @@ final class SettingsWindowController: NSWindowController {
     }
 
     private func loadConfigIntoControls() {
+        isLoadingControls = true
+        defer { isLoadingControls = false }
         sensitivitySlider.doubleValue = config.minAmplitude
         updateSensitivityLabel()
         cooldownField.integerValue = config.cooldownMs
@@ -592,6 +671,16 @@ final class SettingsWindowController: NSWindowController {
             row.onHotkeyRecordingChanged = { [weak self] recording in
                 self?.onHotkeyRecordingChanged?(recording)
             }
+            row.onChange = { [weak self] in
+                self?.scheduleAutoSave()
+            }
+            row.onValidationRequested = { [weak self] in
+                self?.commitChanges(showValidationErrors: true) ?? false
+            }
+            row.hotkeyValidationMessage = { [weak self, weak row] candidate in
+                guard let self, let row else { return nil }
+                return self.hotkeyConflictMessage(candidate, excluding: row)
+            }
             actionRows.append(row)
             actionRowsStack.addArrangedSubview(row)
             if index < config.textActions.count - 1 {
@@ -612,11 +701,19 @@ final class SettingsWindowController: NSWindowController {
         row.alignment = .centerY
         row.spacing = 10
         row.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 6, right: 0)
-        for (title, width) in [("", 28), ("启用", 52), ("名称", 140), ("输入内容", 110), ("回车", 54), ("快捷键", 170)] {
+        let columns: [(String, Int)] = [
+            ("", 28),
+            (L10n.text("Enabled", "启用"), 52),
+            (L10n.text("Name", "名称"), 140),
+            (L10n.text("Input", "输入内容"), 110),
+            (L10n.text("Return", "回车"), 54),
+            (L10n.text("Shortcut", "快捷键"), 170),
+        ]
+        for (title, width) in columns {
             let label = NSTextField(labelWithString: title)
             label.font = .systemFont(ofSize: 11, weight: .medium)
             label.textColor = .secondaryLabelColor
-            if title == "输入内容" {
+            if width == 110 {
                 label.widthAnchor.constraint(greaterThanOrEqualToConstant: CGFloat(width)).isActive = true
                 label.setContentHuggingPriority(.defaultLow, for: .horizontal)
             } else {
@@ -627,10 +724,17 @@ final class SettingsWindowController: NSWindowController {
         return row
     }
 
-    private func readConfigFromControls() -> AppConfig? {
+    private func readConfigFromControls(showValidationErrors: Bool = true) -> AppConfig? {
         var next = config
         next.minAmplitude = min(max(sensitivitySlider.doubleValue, SensitivitySliderView.minValue), SensitivitySliderView.maxValue)
-        next.cooldownMs = max(100, min(5000, cooldownField.integerValue))
+        guard let cooldown = Int(cooldownField.stringValue), (100...5000).contains(cooldown) else {
+            reportValidationError(L10n.text(
+                "Cooldown must be a whole number between 100 and 5000 milliseconds.",
+                "冷却时间必须是 100 到 5000 之间的整数毫秒值。"
+            ), showAlert: showValidationErrors)
+            return nil
+        }
+        next.cooldownMs = cooldown
         next.paused = pauseAllSwitch.state == .on
         next.pauseSlapActions = pauseSlapSwitch.state == .on
         next.pauseHotkeys = pauseHotkeysSwitch.state == .on
@@ -642,16 +746,22 @@ final class SettingsWindowController: NSWindowController {
         var seenHotkeys = Set<String>()
         for row in actionRows {
             guard var action = row.action() else {
-                showValidationError("有一个快捷键格式不正确。")
+                reportValidationError(L10n.text("One shortcut is invalid.", "有一个快捷键格式不正确。"),
+                                      showAlert: showValidationErrors)
                 return nil
             }
             if action.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                showValidationError("动作名称不能为空。")
+                reportValidationError(L10n.text("Action names cannot be empty.", "动作名称不能为空。"),
+                                      showAlert: showValidationErrors)
                 return nil
             }
             let signature = "\(action.hotkey.modifiers):\(action.hotkey.keyCode)"
             if action.enabled && seenHotkeys.contains(signature) {
-                showValidationError("快捷键 \(action.hotkey.displayName) 被重复使用。")
+                reportValidationError(L10n.format(
+                    "The shortcut %@ is used more than once.",
+                    "快捷键 %@ 被重复使用。",
+                    action.hotkey.displayName
+                ), showAlert: showValidationErrors)
                 return nil
             }
             if action.enabled {
@@ -661,7 +771,8 @@ final class SettingsWindowController: NSWindowController {
             nextActions.append(action)
         }
         if nextActions.isEmpty {
-            showValidationError("至少需要保留一个动作。")
+            reportValidationError(L10n.text("Keep at least one action.", "至少需要保留一个动作。"),
+                                  showAlert: showValidationErrors)
             return nil
         }
         next.textActions = nextActions
@@ -686,13 +797,49 @@ final class SettingsWindowController: NSWindowController {
 
     private func showValidationError(_ message: String) {
         let alert = NSAlert()
-        alert.messageText = "无法保存控制面板设置"
+        alert.messageText = L10n.text("Settings need attention", "设置需要处理")
         alert.informativeText = message
         alert.runModal()
     }
 
+    private func reportValidationError(_ message: String, showAlert: Bool) {
+        if showAlert {
+            showValidationError(message)
+        }
+    }
+
+    private func scheduleAutoSave(delay: TimeInterval = 0.2) {
+        guard !isLoadingControls else { return }
+        autoSaveTimer?.invalidate()
+        autoSaveTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            self?.commitChanges()
+        }
+    }
+
+    @discardableResult
+    private func commitChanges(showValidationErrors: Bool = false) -> Bool {
+        guard let next = readConfigFromControls(showValidationErrors: showValidationErrors) else { return false }
+        config = next
+        onChange?(next)
+        return true
+    }
+
+    private func hotkeyConflictMessage(_ candidate: HotkeySpec,
+                                       excluding sourceRow: SettingsActionRowView) -> String? {
+        let duplicate = actionRows.contains { row in
+            row !== sourceRow && row.isEnabled && row.hotkey == candidate
+        }
+        if duplicate {
+            return L10n.format("The shortcut %@ is already assigned to another action.",
+                               "快捷键 %@ 已分配给其他动作。",
+                               candidate.displayName)
+        }
+        return HotkeyConflictDetector.systemConflictMessage(for: candidate)
+    }
+
     @objc private func sensitivityChanged() {
         updateSensitivityLabel()
+        scheduleAutoSave()
     }
 
     @objc private func pageChanged() {
@@ -708,19 +855,25 @@ final class SettingsWindowController: NSWindowController {
 
     @objc private func cooldownStepperChanged() {
         cooldownField.integerValue = cooldownStepper.integerValue
+        scheduleAutoSave()
     }
 
     @objc private func slapActionChanged() {
         guard let id = slapActionPopup.selectedItem?.representedObject as? String,
               let row = actionRows.first(where: { $0.actionID == id }) else { return }
         selectActionRow(row)
+        scheduleAutoSave()
+    }
+
+    @objc private func controlChanged() {
+        scheduleAutoSave()
     }
 
     @objc private func addAction() {
         guard let snapshot = snapshotActionsForEditing() else { return }
         let nextNumber = snapshot.count + 1
         let newAction = TextAction(id: nextActionID(existing: snapshot),
-                                   title: "自定义动作 \(nextNumber)",
+                                   title: L10n.format("Custom Action %d", "自定义动作 %d", nextNumber),
                                    input: "",
                                    autoPressReturn: true,
                                    hotkey: nextAvailableHotkey(existing: snapshot),
@@ -728,6 +881,7 @@ final class SettingsWindowController: NSWindowController {
         config.textActions = snapshot + [newAction]
         config.slapActionID = newAction.id
         reloadActionControls()
+        scheduleAutoSave(delay: 0)
     }
 
     @objc private func deleteSelectedAction() {
@@ -740,17 +894,20 @@ final class SettingsWindowController: NSWindowController {
                 ?? TextAction.defaultSlapActionID
         }
         reloadActionControls()
+        scheduleAutoSave(delay: 0)
     }
 
     @objc private func restoreDefaultActions() {
         config.textActions = TextAction.defaults
         config.slapActionID = TextAction.defaultSlapActionID
         reloadActionControls()
+        scheduleAutoSave(delay: 0)
     }
 
     @objc private func restoreDefaults() {
         config = AppConfig()
         loadConfigIntoControls()
+        scheduleAutoSave(delay: 0)
     }
 
     @objc private func closePanel() {
@@ -764,12 +921,6 @@ final class SettingsWindowController: NSWindowController {
         } else {
             NSWorkspace.shared.open(configURL.deletingLastPathComponent())
         }
-    }
-
-    @objc private func save() {
-        stopHotkeyRecording()
-        guard let next = readConfigFromControls() else { return }
-        onSave?(next)
     }
 
     private func stopHotkeyRecording() {
@@ -797,6 +948,7 @@ final class SettingsWindowController: NSWindowController {
             config.slapActionID = selectedRow.actionID
         }
         updateDeleteActionButton()
+        scheduleAutoSave()
     }
 
     private func updateDeleteActionButton() {
@@ -807,7 +959,7 @@ final class SettingsWindowController: NSWindowController {
         var result: [TextAction] = []
         for row in actionRows {
             guard let action = row.action() else {
-                showValidationError("有一个快捷键格式不正确。")
+                showValidationError(L10n.text("One shortcut is invalid.", "有一个快捷键格式不正确。"))
                 return nil
             }
             result.append(action)
@@ -846,6 +998,13 @@ private final class SettingsActionRowView: NSStackView {
     private let returnSwitch: NSButton
     private let hotkeyRecorder: HotkeyRecorderView
     var onSelectionChanged: ((SettingsActionRowView) -> Void)?
+    var onChange: (() -> Void)?
+    var onValidationRequested: (() -> Bool)?
+    var hotkeyValidationMessage: ((HotkeySpec) -> String?)? {
+        didSet {
+            hotkeyRecorder.validationMessage = hotkeyValidationMessage
+        }
+    }
     var onHotkeyRecordingChanged: ((Bool) -> Void)? {
         didSet {
             hotkeyRecorder.onRecordingChanged = onHotkeyRecordingChanged
@@ -854,6 +1013,14 @@ private final class SettingsActionRowView: NSStackView {
 
     var actionID: String {
         sourceID
+    }
+
+    var isEnabled: Bool {
+        enabledSwitch.state == .on
+    }
+
+    var hotkey: HotkeySpec {
+        hotkeyRecorder.currentHotkey()
     }
 
     var isSelected: Bool {
@@ -880,12 +1047,21 @@ private final class SettingsActionRowView: NSStackView {
 
         selectionButton.target = self
         selectionButton.action = #selector(selectRow)
+        enabledSwitch.target = self
+        enabledSwitch.action = #selector(enabledChanged)
+        returnSwitch.target = self
+        returnSwitch.action = #selector(valueChanged)
         enabledSwitch.setButtonType(.switch)
         returnSwitch.setButtonType(.switch)
         enabledSwitch.state = action.enabled ? .on : .off
         returnSwitch.state = action.autoPressReturn ? .on : .off
         titleField.font = .systemFont(ofSize: 13)
         inputField.font = .systemFont(ofSize: 13)
+        titleField.delegate = self
+        inputField.delegate = self
+        hotkeyRecorder.onHotkeyChanged = { [weak self] _ in
+            self?.onChange?()
+        }
 
         selectionButton.widthAnchor.constraint(equalToConstant: 28).isActive = true
         enabledSwitch.widthAnchor.constraint(equalToConstant: 52).isActive = true
@@ -911,7 +1087,7 @@ private final class SettingsActionRowView: NSStackView {
                           title: titleField.stringValue,
                           input: inputField.stringValue,
                           autoPressReturn: returnSwitch.state == .on,
-                          hotkey: hotkeyRecorder.recordedHotkey(),
+                          hotkey: hotkeyRecorder.currentHotkey(),
                           enabled: enabledSwitch.state == .on)
     }
 
@@ -922,10 +1098,40 @@ private final class SettingsActionRowView: NSStackView {
     @objc private func selectRow() {
         onSelectionChanged?(self)
     }
+
+    @objc private func valueChanged() {
+        onChange?()
+    }
+
+    @objc private func enabledChanged() {
+        if onValidationRequested?() == false {
+            enabledSwitch.state = enabledSwitch.state == .on ? .off : .on
+        }
+    }
 }
 
-extension SettingsWindowController: NSWindowDelegate {
+extension SettingsActionRowView: NSTextFieldDelegate {
+    func controlTextDidChange(_ obj: Notification) {
+        onChange?()
+    }
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        _ = onValidationRequested?()
+    }
+}
+
+extension SettingsWindowController: NSWindowDelegate, NSTextFieldDelegate {
+    func controlTextDidChange(_ obj: Notification) {
+        scheduleAutoSave()
+    }
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        commitChanges(showValidationErrors: true)
+    }
+
     func windowWillClose(_ notification: Notification) {
+        autoSaveTimer?.invalidate()
+        commitChanges(showValidationErrors: true)
         stopHotkeyRecording()
     }
 }

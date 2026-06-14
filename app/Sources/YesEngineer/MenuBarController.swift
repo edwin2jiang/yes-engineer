@@ -3,7 +3,7 @@ import SharedTypes
 import os
 
 final class MenuBarController: NSObject, NSMenuDelegate {
-    private let log = Logger(subsystem: "ai.slaptoyes", category: "menubar")
+    private let log = Logger(subsystem: "ai.yesengineer", category: "menubar")
     private let store = ConfigStore()
     private let client = DaemonClient()
     private let hotkeys = HotkeyManager()
@@ -18,13 +18,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     func start() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let btn = statusItem.button {
-            btn.image = NSImage(systemSymbolName: "hand.raised", accessibilityDescription: "Always Yes")
+            btn.image = NSImage(systemSymbolName: "hand.raised", accessibilityDescription: "Yes Engineer")
             btn.image?.isTemplate = true
-            btn.toolTip = "Always Yes"
+            btn.toolTip = "Yes Engineer"
         }
 
         // First-run install attempt; ignore failures so user can retry from menu.
-        if DaemonInstaller.status == .notRegistered {
+        if !AppEnvironment.isUITesting, DaemonInstaller.status == .notRegistered {
             try? DaemonInstaller.install()
         }
 
@@ -32,19 +32,37 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         hotkeys.onFire = { [weak self] actionID in
             self?.performActionIfAllowed(actionID: actionID, source: "hotkey")
         }
-        hotkeys.register(actions: store.config.activeHotkeyActions)
+        hotkeys.onRegistrationConflict = { [weak self] hotkey in
+            self?.showHotkeyConflict(hotkey)
+        }
+        if !AppEnvironment.isUITesting {
+            hotkeys.register(actions: store.config.activeHotkeyActions)
+        }
         client.onSlap = { [weak self] ev in self?.handleSlap(ev) }
         client.onConnected = { [weak self] in
             guard let self = self else { return }
             self.client.push(config: self.store.config.daemonConfig())
         }
-        client.connect()
+        if !AppEnvironment.isUITesting {
+            client.connect()
+        }
 
-        updateAutoAccessibilityPrompting()
+        if !AppEnvironment.isUITesting {
+            updateAutoAccessibilityPrompting()
+        }
     }
 
-    func showControlPanelForUITesting() {
+    func showControlPanel() {
         openControlPanel()
+        guard let path = AppEnvironment.values["YES_ENGINEER_SCREENSHOT_PATH"] else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            do {
+                try self?.settingsWindow?.writeScreenshot(to: URL(fileURLWithPath: path))
+            } catch {
+                self?.log.error("screenshot failed: \(error.localizedDescription, privacy: .public)")
+            }
+            NSApp.terminate(nil)
+        }
     }
 
     private func rebuildMenu() {
@@ -59,7 +77,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        let panel = NSMenuItem(title: "打开控制面板…", action: #selector(openControlPanel), keyEquivalent: ",")
+        let panel = NSMenuItem(title: L10n.text("Open Control Panel…", "打开控制面板…"),
+                               action: #selector(openControlPanel),
+                               keyEquivalent: ",")
         panel.target = self
         menu.addItem(panel)
 
@@ -67,9 +87,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         let pauseMenu = NSMenu()
         for (title, key, paused) in [
-            ("全部暂停", "all", store.config.paused),
-            ("暂停拍击动作", "slap", store.config.pauseSlapActions),
-            ("暂停快捷键", "hotkeys", store.config.pauseHotkeys),
+            (L10n.text("Pause everything", "全部暂停"), "all", store.config.paused),
+            (L10n.text("Pause tap actions", "暂停拍击动作"), "slap", store.config.pauseSlapActions),
+            (L10n.text("Pause shortcuts", "暂停快捷键"), "hotkeys", store.config.pauseHotkeys),
         ] {
             let item = NSMenuItem(title: title, action: #selector(togglePauseFlag(_:)), keyEquivalent: "")
             item.target = self
@@ -79,11 +99,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
         let pauseRootTitle: String
         if store.config.paused {
-            pauseRootTitle = "暂停控制（全部已暂停）"
+            pauseRootTitle = L10n.text("Pause Controls (All Paused)", "暂停控制（全部已暂停）")
         } else if store.config.pauseSlapActions || store.config.pauseHotkeys {
-            pauseRootTitle = "暂停控制（部分已暂停）"
+            pauseRootTitle = L10n.text("Pause Controls (Partially Paused)", "暂停控制（部分已暂停）")
         } else {
-            pauseRootTitle = "暂停控制"
+            pauseRootTitle = L10n.text("Pause Controls", "暂停控制")
         }
         let pauseRoot = NSMenuItem(title: pauseRootTitle, action: nil, keyEquivalent: "")
         pauseRoot.submenu = pauseMenu
@@ -99,7 +119,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             item.state = (store.config.mode == m) ? .on : .off
             modeMenu.addItem(item)
         }
-        let modeRoot = NSMenuItem(title: "应用范围", action: nil, keyEquivalent: "")
+        let modeRoot = NSMenuItem(title: L10n.text("App Scope", "应用范围"), action: nil, keyEquivalent: "")
         modeRoot.submenu = modeMenu
         menu.addItem(modeRoot)
 
@@ -111,7 +131,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             item.state = (store.config.slapActionID == action.id) ? .on : .off
             slapMenu.addItem(item)
         }
-        let slapRoot = NSMenuItem(title: "拍击动作", action: nil, keyEquivalent: "")
+        let slapRoot = NSMenuItem(title: L10n.text("Tap Action", "拍击动作"), action: nil, keyEquivalent: "")
         slapRoot.submenu = slapMenu
         menu.addItem(slapRoot)
 
@@ -125,12 +145,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             shortcutsMenu.addItem(item)
         }
         shortcutsMenu.addItem(NSMenuItem.separator())
-        let editShortcuts = NSMenuItem(title: "编辑快捷键与输入内容…",
+        let editShortcuts = NSMenuItem(title: L10n.text("Edit Shortcuts & Input…", "编辑快捷键与输入内容…"),
                                        action: #selector(openShortcutSettings),
                                        keyEquivalent: ",")
         editShortcuts.target = self
         shortcutsMenu.addItem(editShortcuts)
-        let shortcutsRoot = NSMenuItem(title: "快捷键", action: nil, keyEquivalent: "")
+        let shortcutsRoot = NSMenuItem(title: L10n.text("Shortcuts", "快捷键"), action: nil, keyEquivalent: "")
         shortcutsRoot.submenu = shortcutsMenu
         menu.addItem(shortcutsRoot)
 
@@ -142,26 +162,34 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             item.state = (store.config.feedbackMode == mode) ? .on : .off
             feedbackMenu.addItem(item)
         }
-        let feedbackRoot = NSMenuItem(title: "执行反馈", action: nil, keyEquivalent: "")
+        let feedbackRoot = NSMenuItem(title: L10n.text("Feedback", "执行反馈"), action: nil, keyEquivalent: "")
         feedbackRoot.submenu = feedbackMenu
         menu.addItem(feedbackRoot)
 
         menu.addItem(NSMenuItem.separator())
 
-        let install = NSMenuItem(title: "守护进程：\(DaemonInstaller.statusDescription)",
+        let install = NSMenuItem(title: L10n.format("Daemon: %@", "守护进程：%@", DaemonInstaller.statusDescription),
                                   action: #selector(reinstallDaemon), keyEquivalent: "")
         install.target = self
         menu.addItem(install)
 
         let axOK = Permissions.isAccessibilityTrusted
-        let axItem = NSMenuItem(title: "辅助功能：\(axOK ? "已授权" : "未授权（点此申请）")",
+        let axItem = NSMenuItem(title: L10n.format(
+            "Accessibility: %@",
+            "辅助功能：%@",
+            axOK
+                ? L10n.text("Granted", "已授权")
+                : L10n.text("Not granted (click to request)", "未授权（点此申请）")
+        ),
                                 action: #selector(requestAX), keyEquivalent: "")
         axItem.target = self
         menu.addItem(axItem)
 
         menu.addItem(NSMenuItem.separator())
 
-        let quit = NSMenuItem(title: "退出 Always Yes", action: #selector(quit), keyEquivalent: "q")
+        let quit = NSMenuItem(title: L10n.text("Quit Yes Engineer", "退出 Yes Engineer"),
+                              action: #selector(quit),
+                              keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
 
@@ -180,14 +208,23 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func applyConfig(_ cfg: AppConfig, feedbackMessage: String? = nil) {
+    private func applyConfig(_ cfg: AppConfig,
+                             feedbackMessage: String? = nil,
+                             skipSettingsWindow: Bool = false,
+                             skipShortcutWindow: Bool = false) {
         store.save(cfg)
-        client.push(config: cfg.daemonConfig())
-        hotkeys.register(actions: cfg.activeHotkeyActions)
-        updateAutoAccessibilityPrompting()
+        if !AppEnvironment.isUITesting {
+            client.push(config: cfg.daemonConfig())
+            hotkeys.register(actions: cfg.activeHotkeyActions)
+            updateAutoAccessibilityPrompting()
+        }
         rebuildMenu()
-        shortcutSettings?.updateConfig(cfg)
-        settingsWindow?.updateConfig(cfg)
+        if !skipShortcutWindow {
+            shortcutSettings?.updateConfig(cfg)
+        }
+        if !skipSettingsWindow {
+            settingsWindow?.updateConfig(cfg)
+        }
         if let feedbackMessage = feedbackMessage {
             showFeedback(feedbackMessage)
         }
@@ -195,8 +232,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     private func modeName(_ m: AppMode) -> String {
         switch m {
-        case .whitelist: return "所有 AI 编程应用"
-        case .global: return "所有应用"
+        case .whitelist: return L10n.text("All AI coding apps", "所有 AI 编程应用")
+        case .global: return L10n.text("All apps", "所有应用")
         }
     }
 
@@ -324,7 +361,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
               let mode = FeedbackMode(rawValue: raw) else { return }
         var cfg = store.config
         cfg.feedbackMode = mode
-        applyConfig(cfg, feedbackMessage: "执行反馈：\(mode.menuTitle)")
+        applyConfig(cfg, feedbackMessage: L10n.format("Feedback: %@", "执行反馈：%@", mode.menuTitle))
     }
 
     @objc private func runShortcutAction(_ sender: NSMenuItem) {
@@ -334,9 +371,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func openShortcutSettings() {
         let controller = ShortcutSettingsWindowController(config: store.config)
-        controller.onSave = { [weak self] cfg in
+        controller.onChange = { [weak self, weak controller] cfg in
             guard let self = self else { return }
-            self.applyConfig(cfg, feedbackMessage: "快捷键与输入内容已保存")
+            self.applyConfig(cfg, skipShortcutWindow: controller != nil)
         }
         controller.onOpenControlPanel = { [weak self] in
             self?.openControlPanel()
@@ -351,8 +388,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func openControlPanel() {
         let controller = settingsWindow ?? SettingsWindowController(config: store.config, configURL: store.url)
-        controller.onSave = { [weak self] cfg in
-            self?.applyConfig(cfg, feedbackMessage: "控制面板设置已保存")
+        controller.onChange = { [weak self, weak controller] cfg in
+            self?.applyConfig(cfg, skipSettingsWindow: controller != nil)
         }
         controller.onRequestAccessibility = { [weak self] in
             self?.requestAX()
@@ -372,7 +409,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     private func setHotkeyRecording(_ recording: Bool) {
-        hotkeys.register(actions: recording ? [] : store.config.activeHotkeyActions)
+        if !AppEnvironment.isUITesting {
+            hotkeys.register(actions: recording ? [] : store.config.activeHotkeyActions)
+        }
     }
 
     private func showFeedback(_ message: String) {
@@ -382,13 +421,15 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private func feedbackMessage(for action: TextAction) -> String {
         let text = action.input.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.isEmpty {
-            return action.autoPressReturn ? "已执行：按回车" : "已执行：\(action.title)"
+            return action.autoPressReturn
+                ? L10n.text("Done: pressed Return", "已执行：按回车")
+                : L10n.format("Done: %@", "已执行：%@", action.title)
         }
         let preview = text.count > 28 ? "\(text.prefix(28))…" : text
         if action.autoPressReturn {
-            return "已执行：输入 \(preview) 并回车"
+            return L10n.format("Done: typed %@ and pressed Return", "已执行：输入 %@ 并回车", preview)
         }
-        return "已执行：输入 \(preview)"
+        return L10n.format("Done: typed %@", "已执行：输入 %@", preview)
     }
 
     @objc private func requestAX() {
@@ -404,7 +445,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             client.connect()
         } catch {
             let alert = NSAlert()
-            alert.messageText = "守护进程安装失败"
+            alert.messageText = L10n.text("Daemon installation failed", "守护进程安装失败")
             alert.informativeText = error.localizedDescription
             alert.runModal()
         }
@@ -413,6 +454,18 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    private func showHotkeyConflict(_ hotkey: HotkeySpec) {
+        let alert = NSAlert()
+        alert.messageText = L10n.text("Shortcut conflict", "快捷键冲突")
+        alert.informativeText = L10n.format(
+            "The shortcut %@ could not be registered because macOS or another app is already using it.",
+            "快捷键 %@ 无法注册，因为 macOS 或其他应用已在使用它。",
+            hotkey.displayName
+        )
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 
     // MARK: NSMenuDelegate

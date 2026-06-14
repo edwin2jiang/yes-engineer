@@ -79,7 +79,7 @@ final class FeedbackPresenter {
 
     private func showAlert(_ message: String) {
         let alert = NSAlert()
-        alert.messageText = "Always Yes"
+        alert.messageText = "Yes Engineer"
         alert.informativeText = message
         alert.alertStyle = .informational
         alert.runModal()

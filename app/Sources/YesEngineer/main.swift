@@ -6,10 +6,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         menubar.start()
-        if ProcessInfo.processInfo.environment["ALWAYS_YES_OPEN_SETTINGS"] == "1" {
-            DispatchQueue.main.async { [weak self] in
-                self?.menubar.showControlPanelForUITesting()
-            }
+        DispatchQueue.main.async { [weak self] in
+            self?.menubar.showControlPanel()
         }
     }
 }

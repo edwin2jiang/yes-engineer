@@ -3,11 +3,12 @@ import Foundation
 import os
 
 final class HotkeyManager {
-    private let log = Logger(subsystem: "ai.slaptoyes", category: "hotkey")
+    private let log = Logger(subsystem: "ai.yesengineer", category: "hotkey")
     private var refs: [EventHotKeyRef?] = []
     private var actionIDs: [UInt32: String] = [:]
     private var handlerRef: EventHandlerRef?
     var onFire: ((String) -> Void)?
+    var onRegistrationConflict: ((HotkeySpec) -> Void)?
 
     init() {
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
@@ -57,7 +58,7 @@ final class HotkeyManager {
             usedHotkeys.insert(signature)
 
             var ref: EventHotKeyRef?
-            let carbonID = EventHotKeyID(signature: HotkeyManager.fourCharCode("AYHK"), id: nextID)
+            let carbonID = EventHotKeyID(signature: HotkeyManager.fourCharCode("YEHK"), id: nextID)
             let status = RegisterEventHotKey(action.hotkey.keyCode,
                                              action.hotkey.modifiers,
                                              carbonID,
@@ -71,6 +72,9 @@ final class HotkeyManager {
                 nextID += 1
             } else {
                 log.error("register hotkey failed: \(action.hotkey.displayName, privacy: .public), status=\(status)")
+                DispatchQueue.main.async { [weak self] in
+                    self?.onRegistrationConflict?(action.hotkey)
+                }
             }
         }
     }

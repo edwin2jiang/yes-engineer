@@ -1,5 +1,5 @@
 import XCTest
-@testable import SlapToYes
+@testable import YesEngineer
 
 final class AppConfigTests: XCTestCase {
     func testDefaultSlapActionInputsYesAndPressesReturn() {

@@ -39,4 +39,4 @@ jobs:
         run: ./Bundle/build-app.sh
 
       - name: Verify app signature
-        run: codesign --verify --deep --strict "app/build/Always Yes.app"
+        run: codesign --verify --deep --strict "app/build/Yes Engineer.app"

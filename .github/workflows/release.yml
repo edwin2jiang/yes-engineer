@@ -37,8 +37,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          archive="Always-Yes-${GITHUB_REF_NAME}.app.zip"
-          ditto -c -k --sequesterRsrc --keepParent "app/build/Always Yes.app" "${archive}"
+          archive="Yes-Engineer-${GITHUB_REF_NAME}.app.zip"
+          ditto -c -k --sequesterRsrc --keepParent "app/build/Yes Engineer.app" "${archive}"
           shasum -a 256 "${archive}" > "${archive}.sha256"
 
       - name: Publish GitHub Release
@@ -47,14 +47,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          archive="Always-Yes-${GITHUB_REF_NAME}.app.zip"
+          archive="Yes-Engineer-${GITHUB_REF_NAME}.app.zip"
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" "${archive}" "${archive}.sha256" --clobber
           else
             gh release create "${GITHUB_REF_NAME}" \
               "${archive}" \
               "${archive}.sha256" \
-              --title "Always Yes ${GITHUB_REF_NAME}" \
+              --title "Yes Engineer ${GITHUB_REF_NAME}" \
               --generate-notes \
               --verify-tag
           fi
