@@ -179,25 +179,73 @@ jobs:
             echo "  - ${a}  ($(wc -c < "${a}") bytes)"
           done
 
-          # Ensure the Release exists. A tag push doesn't create the
-          # Release object — only `gh release create` does. On a manual
-          # `workflow_dispatch` the Release may already exist; in that
-          # case we just upload to it.
-          if gh release view "${TAG}" >/dev/null 2>&1; then
-            echo "==> release ${TAG} already exists, uploading artifacts"
-            gh release upload "${TAG}" "${ARTIFACTS[@]}" --clobber
+          # Use the GitHub REST API directly instead of `gh release
+          # create`. The `gh` CLI was observed to silently succeed (exit
+          # 0, no error, run marked successful) while never actually
+          # creating the Release on macos-14 runners. curl against the
+          # REST API gives us explicit error reporting.
+          API="https://api.github.com/repos/${{ github.repository }}"
+          AUTH="Authorization: token ${GH_TOKEN}"
+          CT="Content-Type: application/json"
+          ACCEPT="Accept: application/vnd.github+json"
+
+          # 1) Create the release.
+          echo "==> POST ${API}/releases"
+          CREATE_BODY=$(jq -n \
+            --arg tag "${TAG}" \
+            --arg name "Yes Engineer ${TAG}" \
+            '{tag_name: $tag, name: $name, generate_release_notes: true}')
+          CREATE_RESP=$(curl -sS -X POST \
+            -H "${AUTH}" -H "${CT}" -H "${ACCEPT}" \
+            -d "${CREATE_BODY}" \
+            -w '\n__HTTP_STATUS__:%{http_code}' \
+            "${API}/releases")
+          CREATE_STATUS=$(echo "${CREATE_RESP}" | sed -n 's/^__HTTP_STATUS__://p')
+          CREATE_BODY_OUT=$(echo "${CREATE_RESP}" | sed '$d')
+          echo "==> status=${CREATE_STATUS}"
+          if [[ "${CREATE_STATUS}" == "422" ]]; then
+            # Release already exists (e.g. workflow_dispatch re-run). Fetch
+            # its id and continue with the upload step.
+            echo "==> release already exists, looking it up"
+            GET_RESP=$(curl -sS -H "${AUTH}" -H "${ACCEPT}" \
+              -w '\n__HTTP_STATUS__:%{http_code}' \
+              "${API}/releases/tags/${TAG}")
+            GET_STATUS=$(echo "${GET_RESP}" | sed -n 's/^__HTTP_STATUS__://p')
+            GET_BODY=$(echo "${GET_RESP}" | sed '$d')
+            if [[ "${GET_STATUS}" != "200" ]]; then
+              echo "::error::could not fetch existing release (status=${GET_STATUS}):"
+              echo "${GET_BODY}"
+              exit 1
+            fi
+            RELEASE_ID=$(echo "${GET_BODY}" | jq -r '.id')
+          elif [[ "${CREATE_STATUS}" == "201" ]]; then
+            RELEASE_ID=$(echo "${CREATE_BODY_OUT}" | jq -r '.id')
+            echo "==> created release id=${RELEASE_ID}"
           else
-            echo "==> creating release ${TAG} with ${#ARTIFACTS[@]} artifacts"
-            # Attach artifacts atomically at create time. The default
-            # source archive is left in place as a fallback.
-            gh release create "${TAG}" \
-              "${ARTIFACTS[@]}" \
-              --title "Yes Engineer ${TAG}" \
-              --generate-notes
-            echo "==> release created"
+            echo "::error::create release failed (status=${CREATE_STATUS}):"
+            echo "${CREATE_BODY_OUT}"
+            exit 1
           fi
 
-          # Annotate with a combined SHA256SUMS.txt.
+          # 2) Upload each artifact via the asset upload endpoint.
+          for a in "${ARTIFACTS[@]}"; do
+            NAME=$(basename "${a}")
+            CT_HDR="Content-Type: application/octet-stream"
+            echo "==> uploading ${NAME}"
+            UP_STATUS=$(curl -sS -X POST \
+              -H "${AUTH}" -H "${CT_HDR}" \
+              --data-binary "@${a}" \
+              -w '%{http_code}' -o /tmp/up.json \
+              "${API}/releases/${RELEASE_ID}/assets?name=${NAME}")
+            if [[ "${UP_STATUS}" != "201" ]]; then
+              echo "::error::upload ${NAME} failed (status=${UP_STATUS}):"
+              cat /tmp/up.json
+              exit 1
+            fi
+            echo "  ok ($(jq -r .size /tmp/up.json) bytes)"
+          done
+
+          # 3) Upload the combined SHA256SUMS.txt.
           SUMS_FILE="${ART_DIR}/SHA256SUMS.txt"
           : > "${SUMS_FILE}"
           for a in "${ARTIFACTS[@]}"; do
@@ -205,9 +253,22 @@ jobs:
             shasum -a 256 "${a}" >> "${SUMS_FILE}"
           done
           if [[ -s "${SUMS_FILE}" ]]; then
-            gh release upload "${TAG}" "${SUMS_FILE}" --clobber
+            echo "==> uploading SHA256SUMS.txt"
+            UP_STATUS=$(curl -sS -X POST \
+              -H "Authorization: token ${GH_TOKEN}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@${SUMS_FILE}" \
+              -w '%{http_code}' -o /tmp/up.json \
+              "${API}/releases/${RELEASE_ID}/assets?name=SHA256SUMS.txt")
+            if [[ "${UP_STATUS}" != "201" ]]; then
+              echo "::error::upload SHA256SUMS.txt failed (status=${UP_STATUS}):"
+              cat /tmp/up.json
+              exit 1
+            fi
           fi
 
-          # Final sanity check.
+          # Final sanity dump.
           echo "==> final release assets:"
-          gh release view "${TAG}" --json assets --jq '.assets[] | "  - \(.name)  (\(.size) bytes)"'
+          curl -sS -H "${AUTH}" -H "${ACCEPT}" \
+            "${API}/releases/${RELEASE_ID}" \
+            | jq -r '.assets[] | "  - \(.name)  (\(.size) bytes)"'
