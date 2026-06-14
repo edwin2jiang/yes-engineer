@@ -26,6 +26,11 @@ jobs:
     steps:
       - name: Check out tagged source
         uses: actions/checkout@v6
+        with:
+          # Tag push triggers don't fetch other refs by default. We need
+          # the v1.0.0 tag ref itself on the runner so `gh release create
+          # --verify-tag` and the publish step can resolve it.
+          fetch-tags: true
 
       - name: Resolve version
         id: version
@@ -147,8 +152,13 @@ jobs:
           ART_DIR: ${{ steps.stage.outputs.artifacts_dir }}
         shell: bash
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           TAG="${{ github.ref_name }}"
+
+          echo "==> TAG=${TAG}"
+          echo "==> ART_DIR=${ART_DIR}"
+          echo "==> listing ART_DIR:"
+          ls -la "${ART_DIR}"
 
           # Build the upload list from the staged artifacts. Skip files
           # that were never produced (e.g. DMG build failure).
@@ -160,44 +170,44 @@ jobs:
             "${ART_DIR}/Yes-Engineer-${TAG#v}.dmg.sha256"
           )
           shopt -u nullglob
-          if [[ ${#ARTIFACTS[@]} -eq 0 ]]; then
-            echo "::error::No artifacts produced, aborting."
-            exit 1
-          fi
+          echo "==> ARTIFACTS array count: ${#ARTIFACTS[@]}"
+          for a in "${ARTIFACTS[@]}"; do
+            if [[ ! -f "${a}" ]]; then
+              echo "::error::Staged artifact missing on disk: ${a}"
+              exit 1
+            fi
+            echo "  - ${a}  ($(wc -c < "${a}") bytes)"
+          done
 
           # Ensure the Release exists. A tag push doesn't create the
           # Release object — only `gh release create` does. On a manual
           # `workflow_dispatch` the Release may already exist; in that
           # case we just upload to it.
-          if ! gh release view "${TAG}" >/dev/null 2>&1; then
-            echo "==> creating release ${TAG}"
-            # Create the release with the staged artifacts attached in
-            # one shot. We disable the default source-code auto-zip
-            # (`--no-generate-notes` is unrelated; the source archive is
-            # added by `gh release create` regardless, so we accept it).
-            # IMPORTANT: do NOT split into a create-then-upload pass — the
-            # upload command silently no-ops on a freshly created release
-            # in some runners, leaving only the source archive attached.
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "==> release ${TAG} already exists, uploading artifacts"
+            gh release upload "${TAG}" "${ARTIFACTS[@]}" --clobber
+          else
+            echo "==> creating release ${TAG} with ${#ARTIFACTS[@]} artifacts"
+            # Attach artifacts atomically at create time. The default
+            # source archive is left in place as a fallback.
             gh release create "${TAG}" \
               "${ARTIFACTS[@]}" \
               --title "Yes Engineer ${TAG}" \
-              --generate-notes \
-              --verify-tag
-            echo "==> release created with ${#ARTIFACTS[@]} artifacts attached"
-          else
-            echo "==> release ${TAG} already exists, uploading artifacts"
-            echo "==> uploading ${#ARTIFACTS[@]} artifacts"
-            gh release upload "${TAG}" "${ARTIFACTS[@]}" --clobber
+              --generate-notes
+            echo "==> release created"
           fi
 
-          # Annotate the release body with SHA-256 sums so users can verify
-          # before installing.
+          # Annotate with a combined SHA256SUMS.txt.
           SUMS_FILE="${ART_DIR}/SHA256SUMS.txt"
           : > "${SUMS_FILE}"
           for a in "${ARTIFACTS[@]}"; do
             if [[ "${a}" == *.sha256 ]]; then continue; fi
-            shasum -a 256 "${a}" >> "${SUMS_FILE}" 2>/dev/null || true
+            shasum -a 256 "${a}" >> "${SUMS_FILE}"
           done
           if [[ -s "${SUMS_FILE}" ]]; then
             gh release upload "${TAG}" "${SUMS_FILE}" --clobber
           fi
+
+          # Final sanity check.
+          echo "==> final release assets:"
+          gh release view "${TAG}" --json assets --jq '.assets[] | "  - \(.name)  (\(.size) bytes)"'
