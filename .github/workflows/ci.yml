@@ -28,6 +28,9 @@ jobs:
       - name: Test legacy Go CLI
         run: go test ./...
 
+      - name: Test Swift package
+        run: swift test --package-path app
+
       - name: Build Swift package
         run: swift build --package-path app --configuration release --arch arm64
 

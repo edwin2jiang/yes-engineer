@@ -152,7 +152,9 @@ final class ShortcutSettingsWindowController: NSWindowController {
 
         config.textActions = nextActions
         if !nextActions.contains(where: { $0.id == config.slapActionID }) {
-            config.slapActionID = nextActions.first?.id ?? "confirm"
+            config.slapActionID = nextActions.first(where: { $0.id == TextAction.defaultSlapActionID })?.id
+                ?? nextActions.first?.id
+                ?? TextAction.defaultSlapActionID
         }
         onSave?(config)
         close()

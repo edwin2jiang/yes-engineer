@@ -19,5 +19,10 @@ let package = Package(
             dependencies: ["SharedTypes"],
             path: "Sources/SlapToYes"
         ),
+        .testTarget(
+            name: "SlapToYesTests",
+            dependencies: ["SlapToYes"],
+            path: "Tests/SlapToYesTests"
+        ),
     ]
 )

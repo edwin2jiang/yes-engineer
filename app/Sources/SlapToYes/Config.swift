@@ -57,16 +57,10 @@ struct HotkeySpec: Codable, Equatable {
 
         let replacements = [
             "⌘": "+command+",
-            "cmd": "command",
             "⌃": "+control+",
-            "ctrl": "control",
             "⌥": "+option+",
-            "alt": "option",
-            "opt": "option",
             "⇧": "+shift+",
             "↩": "+return+",
-            "enter": "return",
-            "spacebar": "space",
         ]
         for (from, to) in replacements {
             normalized = normalized.replacingOccurrences(of: from, with: to)
@@ -84,17 +78,17 @@ struct HotkeySpec: Codable, Equatable {
         var keyCode: UInt32?
         for part in parts {
             switch part {
-            case "command", "meta":
+            case "command", "cmd", "meta":
                 modifiers |= HotkeyModifier.command
-            case "control":
+            case "control", "ctrl":
                 modifiers |= HotkeyModifier.control
-            case "option":
+            case "option", "opt", "alt":
                 modifiers |= HotkeyModifier.option
             case "shift":
                 modifiers |= HotkeyModifier.shift
-            case "return":
+            case "return", "enter":
                 keyCode = 0x24
-            case "space":
+            case "space", "spacebar":
                 keyCode = 0x31
             default:
                 if part.count == 1, let code = keyCodeToLetter[part] {
@@ -136,9 +130,11 @@ struct TextAction: Codable, Equatable {
         return "\(title)：\(input)"
     }
 
+    static let defaultSlapActionID = "yes"
+
     static let defaults: [TextAction] = [
         TextAction(id: "confirm", title: "确认 / 继续", input: "", hotkey: .confirm),
-        TextAction(id: "yes", title: "输入 y", input: "y", hotkey: .yes),
+        TextAction(id: "yes", title: "输入 yes", input: "yes", hotkey: .yes),
         TextAction(id: "continue", title: "输入 continue", input: "continue", hotkey: .continuePrompt),
     ]
 }
@@ -151,10 +147,10 @@ struct AppConfig: Codable {
     var paused: Bool = false
     var pauseSlapActions: Bool = false
     var pauseHotkeys: Bool = false
-    var slapActionID: String = "confirm"
+    var slapActionID: String = TextAction.defaultSlapActionID
     var textActions: [TextAction] = TextAction.defaults
     var feedbackMode: FeedbackMode = .toast
-    var autoRequestAccessibility: Bool = false
+    var autoRequestAccessibility: Bool = true
 
     static let defaultApps: [String] = [
         "com.apple.Terminal",
@@ -191,7 +187,10 @@ struct AppConfig: Codable {
     }
 
     func action(id: String) -> TextAction {
-        textActions.first(where: { $0.id == id }) ?? textActions.first ?? TextAction.defaults[0]
+        textActions.first(where: { $0.id == id })
+            ?? textActions.first(where: { $0.id == TextAction.defaultSlapActionID })
+            ?? textActions.first
+            ?? TextAction.defaults[1]
     }
 
     enum CodingKeys: String, CodingKey {
@@ -209,15 +208,16 @@ struct AppConfig: Codable {
         paused = try c.decodeIfPresent(Bool.self, forKey: .paused) ?? false
         pauseSlapActions = try c.decodeIfPresent(Bool.self, forKey: .pauseSlapActions) ?? false
         pauseHotkeys = try c.decodeIfPresent(Bool.self, forKey: .pauseHotkeys) ?? false
-        slapActionID = try c.decodeIfPresent(String.self, forKey: .slapActionID) ?? "confirm"
+        slapActionID = try c.decodeIfPresent(String.self, forKey: .slapActionID) ?? TextAction.defaultSlapActionID
         textActions = try c.decodeIfPresent([TextAction].self, forKey: .textActions) ?? TextAction.defaults
         feedbackMode = try c.decodeIfPresent(FeedbackMode.self, forKey: .feedbackMode) ?? .toast
-        autoRequestAccessibility = try c.decodeIfPresent(Bool.self, forKey: .autoRequestAccessibility) ?? false
+        autoRequestAccessibility = try c.decodeIfPresent(Bool.self, forKey: .autoRequestAccessibility) ?? true
         if textActions.isEmpty {
             textActions = TextAction.defaults
         }
         if !textActions.contains(where: { $0.id == slapActionID }) {
-            slapActionID = textActions[0].id
+            slapActionID = textActions.first(where: { $0.id == TextAction.defaultSlapActionID })?.id
+                ?? textActions[0].id
         }
     }
 }

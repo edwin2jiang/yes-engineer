@@ -324,9 +324,9 @@ final class SettingsWindowController: NSWindowController {
 
         let rows = [
             formRow("辅助功能", horizontalStack([accessibilityStatusLabel, requestAX], spacing: 8),
-                    help: "未授权时，拍击和快捷键不会模拟输入。默认不会自动弹出系统授权提示。"),
+                    help: "未授权时，拍击和快捷键不会模拟输入。应用默认会自动提示完成授权。"),
             formRow("自动提示", autoRequestAXSwitch,
-                    help: "默认关闭。开启后，应用会定时提示辅助功能授权，直到用户完成授权或关闭此开关。"),
+                    help: "默认开启。应用会定时提示辅助功能授权，直到用户完成授权或关闭此开关。"),
             formRow("守护进程", horizontalStack([daemonStatusLabel, reinstall], spacing: 8)),
         ]
         return section(title: "权限与状态", rows: rows)
@@ -667,7 +667,8 @@ final class SettingsWindowController: NSWindowController {
                   nextActions.contains(where: { $0.id == selectedID }) {
             next.slapActionID = selectedID
         } else {
-            next.slapActionID = nextActions[0].id
+            next.slapActionID = nextActions.first(where: { $0.id == TextAction.defaultSlapActionID })?.id
+                ?? nextActions[0].id
         }
 
         return next
@@ -728,14 +729,16 @@ final class SettingsWindowController: NSWindowController {
         guard let snapshot = snapshotActionsForEditing() else { return }
         config.textActions = snapshot.filter { $0.id != selectedID }
         if !config.textActions.contains(where: { $0.id == config.slapActionID }) {
-            config.slapActionID = config.textActions.first?.id ?? "confirm"
+            config.slapActionID = config.textActions.first(where: { $0.id == TextAction.defaultSlapActionID })?.id
+                ?? config.textActions.first?.id
+                ?? TextAction.defaultSlapActionID
         }
         reloadActionControls()
     }
 
     @objc private func restoreDefaultActions() {
         config.textActions = TextAction.defaults
-        config.slapActionID = TextAction.defaults[0].id
+        config.slapActionID = TextAction.defaultSlapActionID
         reloadActionControls()
     }
 
