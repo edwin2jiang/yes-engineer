@@ -43,6 +43,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         updateAutoAccessibilityPrompting()
     }
 
+    func showControlPanelForUITesting() {
+        openControlPanel()
+    }
+
     private func rebuildMenu() {
         let menu = NSMenu()
         menu.delegate = self

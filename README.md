@@ -230,9 +230,16 @@ always-yes/
 
 - [x] **v0.1**：Go CLI 验证，命令行 + sudo（保留为参考）
 - [x] **v0.2**：Swift 菜单栏 app，端到端可用
-- [ ] **v0.3**：拍击力度反馈（轻拍 / 重击区分），登录项一键开启
-- [ ] **v0.4**：完整 6 路检测器算法（STA/LTA + CUSUM + 峰度），减少误触
-- [ ] **v0.5**：申请 Developer ID，正式签名 + Notarize，去掉手动 quarantine 步骤
+- [x] **v0.3**：控制面板、可配置动作与 GitHub 自动发布
+- [ ] **v0.4**：拍击力度反馈（轻拍 / 重击区分），登录项一键开启
+- [ ] **v0.5**：完整 6 路检测器算法（STA/LTA + CUSUM + 峰度），减少误触
+- [ ] **v0.6**：申请 Developer ID，正式签名 + Notarize，去掉手动 quarantine 步骤
+
+## 发布流程
+
+- 推送到 `main` 或创建 Pull Request 时，GitHub Actions 会编译 Swift App、验证签名并测试 Go CLI。
+- 推送 `v*` tag 时会自动构建 App，并在 GitHub Release 上传 `.app.zip` 和 SHA-256 校验文件。
+- tag 版本必须与 `app/Bundle/Info.plist` 中的 `CFBundleShortVersionString` 一致，例如 `0.3.0` 对应 `v0.3.0`。
 
 ---
 

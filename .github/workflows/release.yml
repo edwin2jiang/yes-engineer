@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: macos-14
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v6
+
+      - name: Verify tag matches app version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          app_version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" app/Bundle/Info.plist)
+          if [[ "${tag_version}" != "${app_version}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match app version ${app_version}."
+            exit 1
+          fi
+
+      - name: Build app bundle
+        working-directory: app
+        run: ./Bundle/build-app.sh
+
+      - name: Create release archive and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="Always-Yes-${GITHUB_REF_NAME}.app.zip"
+          ditto -c -k --sequesterRsrc --keepParent "app/build/Always Yes.app" "${archive}"
+          shasum -a 256 "${archive}" > "${archive}.sha256"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="Always-Yes-${GITHUB_REF_NAME}.app.zip"
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${archive}" "${archive}.sha256" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              "${archive}" \
+              "${archive}.sha256" \
+              --title "Always Yes ${GITHUB_REF_NAME}" \
+              --generate-notes \
+              --verify-tag
+          fi

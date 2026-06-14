@@ -2,13 +2,13 @@ import AppKit
 
 final class SettingsWindowController: NSWindowController {
     private enum Layout {
-        static let windowSize = NSSize(width: 780, height: 680)
-        static let minWindowSize = NSSize(width: 680, height: 520)
-        static let contentInset: CGFloat = 22
-        static let sectionSpacing: CGFloat = 26
+        static let windowSize = NSSize(width: 820, height: 680)
+        static let minWindowSize = NSSize(width: 720, height: 560)
+        static let contentInset: CGFloat = 28
+        static let sectionSpacing: CGFloat = 20
         static let rowSpacing: CGFloat = 12
-        static let labelWidth: CGFloat = 132
-        static let contentWidth: CGFloat = 620
+        static let labelWidth: CGFloat = 120
+        static let contentWidth: CGFloat = 680
     }
 
     private var config: AppConfig
@@ -81,8 +81,10 @@ final class SettingsWindowController: NSWindowController {
     func refreshStatus() {
         daemonStatusLabel.stringValue = "守护进程 \(DaemonInstaller.statusDescription)"
         accessibilityStatusLabel.stringValue = "辅助功能 \(Permissions.isAccessibilityTrusted ? "已授权" : "未授权")"
-        daemonStatusLabel.textColor = .labelColor
-        accessibilityStatusLabel.textColor = Permissions.isAccessibilityTrusted ? .labelColor : .systemOrange
+        daemonStatusLabel.textColor = .secondaryLabelColor
+        accessibilityStatusLabel.textColor = Permissions.isAccessibilityTrusted ? .systemGreen : .systemOrange
+        daemonStatusLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        accessibilityStatusLabel.font = .systemFont(ofSize: 13, weight: .medium)
     }
 
     private func buildUI() {
@@ -113,7 +115,11 @@ final class SettingsWindowController: NSWindowController {
 
     private func makeHeader() -> NSView {
         let wrapper = NSView()
-        wrapper.heightAnchor.constraint(equalToConstant: 82).isActive = true
+        wrapper.heightAnchor.constraint(equalToConstant: 92).isActive = true
+
+        let content = NSView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        wrapper.addSubview(content)
 
         let icon = NSImageView(image: NSImage(systemSymbolName: "hand.tap.fill",
                                              accessibilityDescription: nil)
@@ -122,33 +128,37 @@ final class SettingsWindowController: NSWindowController {
         icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 28, weight: .semibold)
         icon.contentTintColor = .controlAccentColor
         icon.translatesAutoresizingMaskIntoConstraints = false
-        wrapper.addSubview(icon)
+        content.addSubview(icon)
 
         let title = NSTextField(labelWithString: "Always Yes")
         title.font = .systemFont(ofSize: 22, weight: .semibold)
         title.translatesAutoresizingMaskIntoConstraints = false
-        wrapper.addSubview(title)
+        content.addSubview(title)
 
         let subtitle = NSTextField(labelWithString: "管理拍击、快捷键和 AI 编程应用范围。")
         subtitle.font = .systemFont(ofSize: 13)
         subtitle.textColor = .secondaryLabelColor
         subtitle.translatesAutoresizingMaskIntoConstraints = false
-        wrapper.addSubview(subtitle)
+        content.addSubview(subtitle)
 
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(greaterThanOrEqualTo: wrapper.leadingAnchor, constant: Layout.contentInset),
-            icon.centerYAnchor.constraint(equalTo: wrapper.centerYAnchor),
+            content.centerXAnchor.constraint(equalTo: wrapper.centerXAnchor),
+            content.widthAnchor.constraint(equalToConstant: Layout.contentWidth),
+            content.topAnchor.constraint(equalTo: wrapper.topAnchor),
+            content.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
+
+            icon.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            icon.centerYAnchor.constraint(equalTo: content.centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 36),
             icon.heightAnchor.constraint(equalToConstant: 36),
 
             title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 12),
-            title.trailingAnchor.constraint(lessThanOrEqualTo: wrapper.trailingAnchor, constant: -Layout.contentInset),
-            title.bottomAnchor.constraint(equalTo: wrapper.centerYAnchor, constant: -1),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor),
+            title.bottomAnchor.constraint(equalTo: content.centerYAnchor, constant: -2),
 
             subtitle.leadingAnchor.constraint(equalTo: title.leadingAnchor),
-            subtitle.trailingAnchor.constraint(lessThanOrEqualTo: wrapper.trailingAnchor, constant: -Layout.contentInset),
-            subtitle.topAnchor.constraint(equalTo: wrapper.centerYAnchor, constant: 3),
-            title.centerXAnchor.constraint(equalTo: wrapper.centerXAnchor, constant: 24),
+            subtitle.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor),
+            subtitle.topAnchor.constraint(equalTo: content.centerYAnchor, constant: 4),
         ])
 
         return wrapper
@@ -159,11 +169,11 @@ final class SettingsWindowController: NSWindowController {
 
         let stack = NSStackView()
         stack.orientation = .vertical
-        stack.alignment = .centerX
-        stack.spacing = 14
-        stack.edgeInsets = NSEdgeInsets(top: 14,
+        stack.alignment = .width
+        stack.spacing = 16
+        stack.edgeInsets = NSEdgeInsets(top: 16,
                                         left: Layout.contentInset,
-                                        bottom: 0,
+                                        bottom: 14,
                                         right: Layout.contentInset)
         stack.translatesAutoresizingMaskIntoConstraints = false
         wrapper.addSubview(stack)
@@ -173,9 +183,10 @@ final class SettingsWindowController: NSWindowController {
         pageControl.target = self
         pageControl.action = #selector(pageChanged)
         for i in 0..<pageControl.segmentCount {
-            pageControl.setWidth(88, forSegment: i)
+            pageControl.setWidth(96, forSegment: i)
         }
-        stack.addArrangedSubview(pageControl)
+        let pageControlRow = horizontalStack([pageControl, flexibleSpacer()], spacing: 0)
+        stack.addArrangedSubview(pageControlRow)
 
         pageContainer.translatesAutoresizingMaskIntoConstraints = false
         pageContainer.setContentHuggingPriority(.defaultLow, for: .vertical)
@@ -214,7 +225,7 @@ final class SettingsWindowController: NSWindowController {
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
 
-        let documentView = NSView()
+        let documentView = FlippedView()
         documentView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.documentView = documentView
 
@@ -250,10 +261,12 @@ final class SettingsWindowController: NSWindowController {
         let wrapper = NSView()
         wrapper.heightAnchor.constraint(equalToConstant: 58).isActive = true
 
-        configPathLabel.stringValue = configURL.path
+        let abbreviatedPath = (configURL.path as NSString).abbreviatingWithTildeInPath
+        configPathLabel.stringValue = "配置文件  \(abbreviatedPath)"
         configPathLabel.font = .systemFont(ofSize: 11)
         configPathLabel.textColor = .tertiaryLabelColor
         configPathLabel.lineBreakMode = .byTruncatingMiddle
+        configPathLabel.toolTip = configURL.path
         configPathLabel.translatesAutoresizingMaskIntoConstraints = false
         wrapper.addSubview(configPathLabel)
 
@@ -293,7 +306,7 @@ final class SettingsWindowController: NSWindowController {
                     help: "默认关闭。开启后，应用会定时提示辅助功能授权，直到用户完成授权或关闭此开关。"),
             formRow("守护进程", horizontalStack([daemonStatusLabel, reinstall], spacing: 8)),
         ]
-        return section(title: "权限", rows: rows)
+        return section(title: "权限与状态", rows: rows)
     }
 
     private func makeDetectionSection() -> NSView {
@@ -346,7 +359,7 @@ final class SettingsWindowController: NSWindowController {
             formRow("执行反馈", feedbackControl),
         ]
 
-        return section(title: "通用", rows: rows)
+        return section(title: "触发与行为", rows: rows)
     }
 
     private func makeActionsSection() -> NSView {
@@ -368,18 +381,18 @@ final class SettingsWindowController: NSWindowController {
             fullWidthRow(horizontalStack([addAction, deleteActionButton, restore, flexibleSpacer()], spacing: 8)),
             fullWidthRow(helpLabel("快捷键可写成 ⇧⌥Y、option+shift+y 或 control+option+return。输入内容为空时只按回车。")),
         ]
-        return section(title: "动作", rows: rows)
+        return section(title: "自动化动作", rows: rows)
     }
 
     private func section(title: String, rows: [NSView]) -> NSView {
         let outer = NSStackView()
         outer.orientation = .vertical
         outer.alignment = .left
-        outer.spacing = 10
+        outer.spacing = 8
         outer.widthAnchor.constraint(equalToConstant: Layout.contentWidth).isActive = true
 
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
         titleLabel.textColor = .labelColor
         titleLabel.alignment = .left
 
@@ -387,13 +400,33 @@ final class SettingsWindowController: NSWindowController {
 
         for (index, row) in rows.enumerated() {
             if index > 0 {
-                stack.addArrangedSubview(makeInsetSeparator())
+                let separator = makeInsetSeparator()
+                separator.widthAnchor.constraint(equalToConstant: Layout.contentWidth - 32).isActive = true
+                stack.addArrangedSubview(separator)
             }
             stack.addArrangedSubview(row)
         }
 
+        let group = NSBox()
+        group.boxType = .custom
+        group.borderWidth = 1
+        group.cornerRadius = 10
+        group.borderColor = .separatorColor
+        group.fillColor = .controlBackgroundColor
+        group.widthAnchor.constraint(equalToConstant: Layout.contentWidth).isActive = true
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        if let contentView = group.contentView {
+            contentView.addSubview(stack)
+            NSLayoutConstraint.activate([
+                stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+                stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+                stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+                stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
+            ])
+        }
+
         outer.addArrangedSubview(titleLabel)
-        outer.addArrangedSubview(stack)
+        outer.addArrangedSubview(group)
         return outer
     }
 
@@ -402,7 +435,7 @@ final class SettingsWindowController: NSWindowController {
         row.orientation = .horizontal
         row.alignment = .top
         row.spacing = 12
-        row.edgeInsets = NSEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
+        row.edgeInsets = NSEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
 
         let label = NSTextField(labelWithString: title)
         label.font = .systemFont(ofSize: 13)
@@ -417,6 +450,7 @@ final class SettingsWindowController: NSWindowController {
         }
         contentStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
         row.addArrangedSubview(contentStack)
+        row.widthAnchor.constraint(equalToConstant: Layout.contentWidth - 32).isActive = true
         return row
     }
 
@@ -425,8 +459,9 @@ final class SettingsWindowController: NSWindowController {
         row.orientation = .vertical
         row.alignment = .width
         row.spacing = 0
-        row.edgeInsets = NSEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
+        row.edgeInsets = NSEdgeInsets(top: 10, left: 0, bottom: 10, right: 0)
         row.addArrangedSubview(content)
+        row.widthAnchor.constraint(equalToConstant: Layout.contentWidth - 32).isActive = true
         return row
     }
 
@@ -441,7 +476,7 @@ final class SettingsWindowController: NSWindowController {
     private func verticalStack(_ views: [NSView], spacing: CGFloat) -> NSStackView {
         let stack = NSStackView(views: views)
         stack.orientation = .vertical
-        stack.alignment = .width
+        stack.alignment = .left
         stack.spacing = spacing
         return stack
     }
@@ -835,6 +870,10 @@ private final class SettingsActionRowView: NSStackView {
     @objc private func selectRow() {
         onSelectionChanged?(self)
     }
+}
+
+private final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
 }
 
 private extension Array {
