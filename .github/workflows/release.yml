@@ -156,17 +156,82 @@ jobs:
           echo "artifacts_dir=${ART_DIR}" >> "${GITHUB_OUTPUT}"
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: actions/github-script@v7
         with:
-          tag_name: ${{ github.ref_name }}
-          name: "Yes Engineer ${{ github.ref_name }}"
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          files: |
-            ${{ steps.stage.outputs.artifacts_dir }}/Yes-Engineer-${{ github.ref_name }}.app.zip
-            ${{ steps.stage.outputs.artifacts_dir }}/Yes-Engineer-${{ github.ref_name }}.app.zip.sha256
-            ${{ steps.stage.outputs.artifacts_dir }}/Yes-Engineer-${{ github.ref_name }}.dmg
-            ${{ steps.stage.outputs.artifacts_dir }}/Yes-Engineer-${{ github.ref_name }}.dmg.sha256
-            ${{ steps.stage.outputs.artifacts_dir }}/SHA256SUMS.txt
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const tag = context.ref.name;
+            const artifactsDir = '${{ steps.stage.outputs.artifacts_dir }}';
+            const path = require('path');
+            const version = tag.replace(/^v/, '');
+            const fileNames = [
+              `Yes-Engineer-${version}.app.zip`,
+              `Yes-Engineer-${version}.app.zip.sha256`,
+              `Yes-Engineer-${version}.dmg`,
+              `Yes-Engineer-${version}.dmg.sha256`,
+              `SHA256SUMS.txt`,
+            ];
+            const paths = fileNames.map(n => `${artifactsDir}/${n}`);
+
+            // Sanity: every file must exist on disk before we touch the
+            // API. Fail loudly with the exact missing path so the next
+            // person doesn't have to dig.
+            const fs = require('fs');
+            for (const p of paths) {
+              if (!fs.existsSync(p)) {
+                core.setFailed(`Staged artifact missing on disk: ${p}`);
+                return;
+              }
+              core.info(`staged: ${p}  (${fs.statSync(p).size} bytes)`);
+            }
+
+            // Create or reuse the release.
+            let release;
+            try {
+              release = await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+                name: `Yes Engineer ${tag}`,
+                generate_release_notes: true,
+              });
+              core.info(`created release id=${release.data.id}`);
+            } catch (err) {
+              if (err.status === 422) {
+                core.info('release already exists, fetching it');
+                const got = await github.rest.repos.getReleaseByTag({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag: tag,
+                });
+                release = got;
+              } else {
+                throw err;
+              }
+            }
+
+            // Upload each artifact as a release asset.
+            for (const p of paths) {
+              const name = path.posix.basename(p);
+              const data = fs.readFileSync(p);
+              const ct = 'application/octet-stream';
+              core.info(`uploading ${name} (${data.length} bytes)`);
+              const asset = await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: release.data.id,
+                name: name,
+                data: data,
+                headers: { 'content-type': ct, 'content-length': data.length },
+              });
+              core.info(`  ok asset_id=${asset.data.id}`);
+            }
+
+            // Final dump for self-diagnosing.
+            const final = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: tag,
+            });
+            for (const a of final.data.assets) {
+              core.info(`attached: ${a.name}  (${a.size} bytes)`);
+            }
