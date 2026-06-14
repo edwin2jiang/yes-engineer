@@ -6,17 +6,19 @@ final class ShortcutSettingsWindowController: NSWindowController {
     private let rowsStack = NSStackView()
     var onSave: ((AppConfig) -> Void)?
     var onOpenControlPanel: (() -> Void)?
+    var onHotkeyRecordingChanged: ((Bool) -> Void)?
 
     init(config: AppConfig) {
         self.config = config
 
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 280),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 810, height: 280),
                               styleMask: [.titled, .closable],
                               backing: .buffered,
                               defer: false)
         window.title = "快捷键与输入内容"
         window.isReleasedWhenClosed = false
         super.init(window: window)
+        window.delegate = self
 
         buildUI()
     }
@@ -47,7 +49,7 @@ final class ShortcutSettingsWindowController: NSWindowController {
         root.addArrangedSubview(rowsStack)
         reloadRows()
 
-        let note = NSTextField(labelWithString: "快捷键可写成 ⇧⌥Y、option+shift+y 或 control+option+return。输入内容为空时只按回车，可取消“回车”只输入文本。")
+        let note = NSTextField(labelWithString: "点击快捷键框或“录制”，再按下一组快捷键；按 Esc 取消。输入内容为空时只按回车。")
         note.textColor = .secondaryLabelColor
         note.font = .systemFont(ofSize: 12)
         root.addArrangedSubview(note)
@@ -78,6 +80,7 @@ final class ShortcutSettingsWindowController: NSWindowController {
     }
 
     private func reloadRows() {
+        stopHotkeyRecording()
         rowsStack.arrangedSubviews.forEach {
             rowsStack.removeArrangedSubview($0)
             $0.removeFromSuperview()
@@ -87,6 +90,9 @@ final class ShortcutSettingsWindowController: NSWindowController {
         rowsStack.addArrangedSubview(makeHeaderRow())
         for action in config.textActions {
             let row = ShortcutRowView(action: action)
+            row.onHotkeyRecordingChanged = { [weak self] recording in
+                self?.onHotkeyRecordingChanged?(recording)
+            }
             rows.append(row)
             rowsStack.addArrangedSubview(row)
         }
@@ -102,7 +108,7 @@ final class ShortcutSettingsWindowController: NSWindowController {
         row.orientation = .horizontal
         row.spacing = 8
 
-        for (title, width) in [("启用", 52), ("名称", 140), ("输入内容", 260), ("回车", 56), ("快捷键", 150)] {
+        for (title, width) in [("启用", 52), ("名称", 140), ("输入内容", 260), ("回车", 56), ("快捷键", 190)] {
             let label = NSTextField(labelWithString: title)
             label.font = .boldSystemFont(ofSize: 12)
             label.textColor = .secondaryLabelColor
@@ -118,6 +124,7 @@ final class ShortcutSettingsWindowController: NSWindowController {
     }
 
     @objc private func cancel() {
+        stopHotkeyRecording()
         close()
     }
 
@@ -126,6 +133,7 @@ final class ShortcutSettingsWindowController: NSWindowController {
     }
 
     @objc private func save() {
+        stopHotkeyRecording()
         var nextActions: [TextAction] = []
         var seenHotkeys = Set<String>()
 
@@ -160,6 +168,10 @@ final class ShortcutSettingsWindowController: NSWindowController {
         close()
     }
 
+    private func stopHotkeyRecording() {
+        rows.forEach { $0.stopHotkeyRecording() }
+    }
+
     private func showValidationError(_ message: String) {
         let alert = NSAlert()
         alert.messageText = "无法保存快捷键"
@@ -174,7 +186,12 @@ private final class ShortcutRowView: NSStackView {
     private let titleField: NSTextField
     private let inputField: NSTextField
     private let returnBox: NSButton
-    private let hotkeyField: NSTextField
+    private let hotkeyRecorder: HotkeyRecorderView
+    var onHotkeyRecordingChanged: ((Bool) -> Void)? {
+        didSet {
+            hotkeyRecorder.onRecordingChanged = onHotkeyRecordingChanged
+        }
+    }
 
     init(action: TextAction) {
         self.sourceID = action.id
@@ -182,7 +199,7 @@ private final class ShortcutRowView: NSStackView {
         self.titleField = NSTextField(string: action.title)
         self.inputField = NSTextField(string: action.input)
         self.returnBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
-        self.hotkeyField = NSTextField(string: action.hotkey.displayName)
+        self.hotkeyRecorder = HotkeyRecorderView(hotkey: action.hotkey, width: 190)
         super.init(frame: .zero)
 
         orientation = .horizontal
@@ -194,13 +211,12 @@ private final class ShortcutRowView: NSStackView {
         titleField.widthAnchor.constraint(equalToConstant: 140).isActive = true
         inputField.widthAnchor.constraint(equalToConstant: 260).isActive = true
         returnBox.widthAnchor.constraint(equalToConstant: 56).isActive = true
-        hotkeyField.widthAnchor.constraint(equalToConstant: 150).isActive = true
 
         addArrangedSubview(enabledBox)
         addArrangedSubview(titleField)
         addArrangedSubview(inputField)
         addArrangedSubview(returnBox)
-        addArrangedSubview(hotkeyField)
+        addArrangedSubview(hotkeyRecorder)
     }
 
     required init(coder: NSCoder) {
@@ -208,12 +224,21 @@ private final class ShortcutRowView: NSStackView {
     }
 
     func action() -> TextAction? {
-        guard let hotkey = HotkeySpec.parse(hotkeyField.stringValue) else { return nil }
         return TextAction(id: sourceID,
                           title: titleField.stringValue,
                           input: inputField.stringValue,
                           autoPressReturn: returnBox.state == .on,
-                          hotkey: hotkey,
+                          hotkey: hotkeyRecorder.recordedHotkey(),
                           enabled: enabledBox.state == .on)
+    }
+
+    func stopHotkeyRecording() {
+        hotkeyRecorder.stopRecording()
+    }
+}
+
+extension ShortcutSettingsWindowController: NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) {
+        stopHotkeyRecording()
     }
 }

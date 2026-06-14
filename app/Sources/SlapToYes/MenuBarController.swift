@@ -341,6 +341,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         controller.onOpenControlPanel = { [weak self] in
             self?.openControlPanel()
         }
+        controller.onHotkeyRecordingChanged = { [weak self] recording in
+            self?.setHotkeyRecording(recording)
+        }
         shortcutSettings = controller
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -359,10 +362,17 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             self?.reinstallDaemon()
             self?.settingsWindow?.refreshStatus()
         }
+        controller.onHotkeyRecordingChanged = { [weak self] recording in
+            self?.setHotkeyRecording(recording)
+        }
         settingsWindow = controller
         controller.updateConfig(store.config)
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func setHotkeyRecording(_ recording: Bool) {
+        hotkeys.register(actions: recording ? [] : store.config.activeHotkeyActions)
     }
 
     private func showFeedback(_ message: String) {

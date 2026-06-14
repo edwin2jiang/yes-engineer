@@ -51,6 +51,7 @@ final class SettingsWindowController: NSWindowController {
     var onSave: ((AppConfig) -> Void)?
     var onRequestAccessibility: (() -> Void)?
     var onReinstallDaemon: (() -> Void)?
+    var onHotkeyRecordingChanged: ((Bool) -> Void)?
 
     init(config: AppConfig, configURL: URL) {
         self.config = config
@@ -64,6 +65,7 @@ final class SettingsWindowController: NSWindowController {
         window.isReleasedWhenClosed = false
         window.minSize = Layout.minWindowSize
         super.init(window: window)
+        window.delegate = self
 
         buildUI()
         loadConfigIntoControls()
@@ -402,7 +404,7 @@ final class SettingsWindowController: NSWindowController {
             formRow("拍击时执行", slapActionPopup),
             fullWidthRow(actionRowsStack),
             fullWidthRow(horizontalStack([addAction, deleteActionButton, restore, flexibleSpacer()], spacing: 8)),
-            fullWidthRow(helpLabel("快捷键可写成 ⇧⌥Y、option+shift+y 或 control+option+return。输入内容为空时只按回车。")),
+            fullWidthRow(helpLabel("点击快捷键框或“录制”，再按下一组组合键；按 Esc 取消。输入内容为空时只按回车。")),
         ]
         return section(title: "自动化动作", rows: rows)
     }
@@ -563,6 +565,7 @@ final class SettingsWindowController: NSWindowController {
     }
 
     private func reloadActionControls() {
+        stopHotkeyRecording()
         slapActionPopup.removeAllItems()
         for action in config.textActions {
             slapActionPopup.addItem(withTitle: action.menuTitle)
@@ -586,6 +589,9 @@ final class SettingsWindowController: NSWindowController {
             row.onSelectionChanged = { [weak self] selectedRow in
                 self?.selectActionRow(selectedRow)
             }
+            row.onHotkeyRecordingChanged = { [weak self] recording in
+                self?.onHotkeyRecordingChanged?(recording)
+            }
             actionRows.append(row)
             actionRowsStack.addArrangedSubview(row)
             if index < config.textActions.count - 1 {
@@ -606,7 +612,7 @@ final class SettingsWindowController: NSWindowController {
         row.alignment = .centerY
         row.spacing = 10
         row.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 6, right: 0)
-        for (title, width) in [("", 28), ("启用", 52), ("名称", 140), ("输入内容", 110), ("回车", 54), ("快捷键", 130)] {
+        for (title, width) in [("", 28), ("启用", 52), ("名称", 140), ("输入内容", 110), ("回车", 54), ("快捷键", 170)] {
             let label = NSTextField(labelWithString: title)
             label.font = .systemFont(ofSize: 11, weight: .medium)
             label.textColor = .secondaryLabelColor
@@ -748,6 +754,7 @@ final class SettingsWindowController: NSWindowController {
     }
 
     @objc private func closePanel() {
+        stopHotkeyRecording()
         close()
     }
 
@@ -760,8 +767,13 @@ final class SettingsWindowController: NSWindowController {
     }
 
     @objc private func save() {
+        stopHotkeyRecording()
         guard let next = readConfigFromControls() else { return }
         onSave?(next)
+    }
+
+    private func stopHotkeyRecording() {
+        actionRows.forEach { $0.stopHotkeyRecording() }
     }
 
     @objc private func reinstallDaemon() {
@@ -832,8 +844,13 @@ private final class SettingsActionRowView: NSStackView {
     private let titleField: NSTextField
     private let inputField: NSTextField
     private let returnSwitch: NSButton
-    private let hotkeyField: NSTextField
+    private let hotkeyRecorder: HotkeyRecorderView
     var onSelectionChanged: ((SettingsActionRowView) -> Void)?
+    var onHotkeyRecordingChanged: ((Bool) -> Void)? {
+        didSet {
+            hotkeyRecorder.onRecordingChanged = onHotkeyRecordingChanged
+        }
+    }
 
     var actionID: String {
         sourceID
@@ -853,7 +870,7 @@ private final class SettingsActionRowView: NSStackView {
         self.titleField = NSTextField(string: action.title)
         self.inputField = NSTextField(string: action.input)
         self.returnSwitch = NSButton(checkboxWithTitle: "", target: nil, action: nil)
-        self.hotkeyField = NSTextField(string: action.hotkey.displayName)
+        self.hotkeyRecorder = HotkeyRecorderView(hotkey: action.hotkey, width: 170)
         super.init(frame: .zero)
 
         orientation = .horizontal
@@ -869,7 +886,6 @@ private final class SettingsActionRowView: NSStackView {
         returnSwitch.state = action.autoPressReturn ? .on : .off
         titleField.font = .systemFont(ofSize: 13)
         inputField.font = .systemFont(ofSize: 13)
-        hotkeyField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
 
         selectionButton.widthAnchor.constraint(equalToConstant: 28).isActive = true
         enabledSwitch.widthAnchor.constraint(equalToConstant: 52).isActive = true
@@ -877,14 +893,13 @@ private final class SettingsActionRowView: NSStackView {
         inputField.widthAnchor.constraint(greaterThanOrEqualToConstant: 110).isActive = true
         inputField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         returnSwitch.widthAnchor.constraint(equalToConstant: 54).isActive = true
-        hotkeyField.widthAnchor.constraint(equalToConstant: 130).isActive = true
 
         addArrangedSubview(selectionButton)
         addArrangedSubview(enabledSwitch)
         addArrangedSubview(titleField)
         addArrangedSubview(inputField)
         addArrangedSubview(returnSwitch)
-        addArrangedSubview(hotkeyField)
+        addArrangedSubview(hotkeyRecorder)
     }
 
     required init(coder: NSCoder) {
@@ -892,17 +907,26 @@ private final class SettingsActionRowView: NSStackView {
     }
 
     func action() -> TextAction? {
-        guard let hotkey = HotkeySpec.parse(hotkeyField.stringValue) else { return nil }
         return TextAction(id: sourceID,
                           title: titleField.stringValue,
                           input: inputField.stringValue,
                           autoPressReturn: returnSwitch.state == .on,
-                          hotkey: hotkey,
+                          hotkey: hotkeyRecorder.recordedHotkey(),
                           enabled: enabledSwitch.state == .on)
+    }
+
+    func stopHotkeyRecording() {
+        hotkeyRecorder.stopRecording()
     }
 
     @objc private func selectRow() {
         onSelectionChanged?(self)
+    }
+}
+
+extension SettingsWindowController: NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) {
+        stopHotkeyRecording()
     }
 }
 
