@@ -40,7 +40,7 @@ final class SettingsWindowController: NSWindowController {
     private let daemonStatusLabel = NSTextField(labelWithString: "")
     private let accessibilityStatusLabel = NSTextField(labelWithString: "")
     private let autoRequestAXSwitch = NSButton(checkboxWithTitle: "自动提示辅助功能授权", target: nil, action: nil)
-    private let configPathLabel = NSTextField(labelWithString: "")
+    private let configPathButton = NSButton()
     private let pageControl = NSSegmentedControl(labels: ["通用", "动作"],
                                                  trackingMode: .selectOne,
                                                  target: nil,
@@ -185,7 +185,14 @@ final class SettingsWindowController: NSWindowController {
         for i in 0..<pageControl.segmentCount {
             pageControl.setWidth(96, forSegment: i)
         }
-        let pageControlRow = horizontalStack([pageControl, flexibleSpacer()], spacing: 0)
+        let pageControlRow = NSView()
+        pageControl.translatesAutoresizingMaskIntoConstraints = false
+        pageControlRow.addSubview(pageControl)
+        NSLayoutConstraint.activate([
+            pageControl.centerXAnchor.constraint(equalTo: pageControlRow.centerXAnchor),
+            pageControl.topAnchor.constraint(equalTo: pageControlRow.topAnchor),
+            pageControl.bottomAnchor.constraint(equalTo: pageControlRow.bottomAnchor),
+        ])
         stack.addArrangedSubview(pageControlRow)
 
         pageContainer.translatesAutoresizingMaskIntoConstraints = false
@@ -261,14 +268,27 @@ final class SettingsWindowController: NSWindowController {
         let wrapper = NSView()
         wrapper.heightAnchor.constraint(equalToConstant: 58).isActive = true
 
+        let configLabel = NSTextField(labelWithString: "配置文件")
+        configLabel.font = .systemFont(ofSize: 11)
+        configLabel.textColor = .tertiaryLabelColor
+        configLabel.translatesAutoresizingMaskIntoConstraints = false
+        wrapper.addSubview(configLabel)
+
         let abbreviatedPath = (configURL.path as NSString).abbreviatingWithTildeInPath
-        configPathLabel.stringValue = "配置文件  \(abbreviatedPath)"
-        configPathLabel.font = .systemFont(ofSize: 11)
-        configPathLabel.textColor = .tertiaryLabelColor
-        configPathLabel.lineBreakMode = .byTruncatingMiddle
-        configPathLabel.toolTip = configURL.path
-        configPathLabel.translatesAutoresizingMaskIntoConstraints = false
-        wrapper.addSubview(configPathLabel)
+        configPathButton.title = abbreviatedPath
+        configPathButton.font = .systemFont(ofSize: 11)
+        configPathButton.contentTintColor = .linkColor
+        configPathButton.isBordered = false
+        configPathButton.bezelStyle = .inline
+        configPathButton.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: nil)
+        configPathButton.imagePosition = .imageLeading
+        configPathButton.imageHugsTitle = true
+        configPathButton.target = self
+        configPathButton.action = #selector(revealConfigFile)
+        configPathButton.toolTip = "在访达中显示 \(configURL.path)"
+        configPathButton.setAccessibilityLabel("在访达中显示配置文件")
+        configPathButton.translatesAutoresizingMaskIntoConstraints = false
+        wrapper.addSubview(configPathButton)
 
         let restore = NSButton(title: "恢复默认", target: self, action: #selector(restoreDefaults))
         let close = NSButton(title: "关闭", target: self, action: #selector(closePanel))
@@ -283,9 +303,12 @@ final class SettingsWindowController: NSWindowController {
         wrapper.addSubview(buttons)
 
         NSLayoutConstraint.activate([
-            configPathLabel.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor, constant: Layout.contentInset),
-            configPathLabel.centerYAnchor.constraint(equalTo: wrapper.centerYAnchor),
-            configPathLabel.trailingAnchor.constraint(lessThanOrEqualTo: buttons.leadingAnchor, constant: -16),
+            configLabel.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor, constant: Layout.contentInset),
+            configLabel.centerYAnchor.constraint(equalTo: wrapper.centerYAnchor),
+
+            configPathButton.leadingAnchor.constraint(equalTo: configLabel.trailingAnchor, constant: 6),
+            configPathButton.centerYAnchor.constraint(equalTo: wrapper.centerYAnchor),
+            configPathButton.trailingAnchor.constraint(lessThanOrEqualTo: buttons.leadingAnchor, constant: -16),
 
             buttons.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor, constant: -Layout.contentInset),
             buttons.centerYAnchor.constraint(equalTo: wrapper.centerYAnchor),
@@ -723,6 +746,14 @@ final class SettingsWindowController: NSWindowController {
 
     @objc private func closePanel() {
         close()
+    }
+
+    @objc private func revealConfigFile() {
+        if FileManager.default.fileExists(atPath: configURL.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([configURL])
+        } else {
+            NSWorkspace.shared.open(configURL.deletingLastPathComponent())
+        }
     }
 
     @objc private func save() {
