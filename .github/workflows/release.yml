@@ -171,19 +171,24 @@ jobs:
           # case we just upload to it.
           if ! gh release view "${TAG}" >/dev/null 2>&1; then
             echo "==> creating release ${TAG}"
-            # Create the release with no assets first, then upload so the
-            # failure mode (e.g. an artifact missing) doesn't leave a
-            # half-populated Release behind.
+            # Create the release with the staged artifacts attached in
+            # one shot. We disable the default source-code auto-zip
+            # (`--no-generate-notes` is unrelated; the source archive is
+            # added by `gh release create` regardless, so we accept it).
+            # IMPORTANT: do NOT split into a create-then-upload pass — the
+            # upload command silently no-ops on a freshly created release
+            # in some runners, leaving only the source archive attached.
             gh release create "${TAG}" \
+              "${ARTIFACTS[@]}" \
               --title "Yes Engineer ${TAG}" \
               --generate-notes \
               --verify-tag
+            echo "==> release created with ${#ARTIFACTS[@]} artifacts attached"
           else
             echo "==> release ${TAG} already exists, uploading artifacts"
+            echo "==> uploading ${#ARTIFACTS[@]} artifacts"
+            gh release upload "${TAG}" "${ARTIFACTS[@]}" --clobber
           fi
-
-          echo "==> uploading ${#ARTIFACTS[@]} artifacts"
-          gh release upload "${TAG}" "${ARTIFACTS[@]}" --clobber
 
           # Annotate the release body with SHA-256 sums so users can verify
           # before installing.
