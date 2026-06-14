@@ -144,6 +144,15 @@ jobs:
           done
           cd "${ART_DIR}"
           ls -la
+          # Generate a combined SHA256SUMS.txt so the release ships with a
+          # single checksum file users can verify against.
+          : > SHA256SUMS.txt
+          shopt -s nullglob
+          for f in *.app.zip *.dmg; do
+            shasum -a 256 "${f}" >> SHA256SUMS.txt
+          done
+          shopt -u nullglob
+          ls -la
           echo "artifacts_dir=${ART_DIR}" >> "${GITHUB_OUTPUT}"
 
       - name: Publish GitHub Release
