@@ -79,6 +79,16 @@ jobs:
           MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
         run: ./Bundle/build-dmg.sh
 
+      - name: Build .app.zip archive
+        working-directory: app
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          ARCHIVE="build/Yes-Engineer-${VERSION}.app.zip"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "build/Yes Engineer.app" "${ARCHIVE}"
+          shasum -a 256 "${ARCHIVE}" > "${ARCHIVE}.sha256"
+
       - name: Verify DMG signature
         if: env.MACOS_CODESIGN_IDENTITY != ''
         run: |
